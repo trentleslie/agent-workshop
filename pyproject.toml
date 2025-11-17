@@ -1,0 +1,44 @@
+[project]
+name = "agent-workshop"
+version = "0.1.0"
+description = "Framework for building automation-focused AI agents with observability"
+readme = "README.md"
+authors = [
+    { name = "trentleslie", email = "trentleslie@gmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "langfuse>=3.0.0",
+    "anthropic>=0.40.0",
+    "langgraph>=0.2.0",
+    "tiktoken>=0.7.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+]
+claude-agent = [
+    "claude-agent-sdk>=0.1.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.6.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
