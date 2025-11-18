@@ -1,12 +1,26 @@
 [project]
 name = "agent-workshop"
-version = "0.1.0"
-description = "Framework for building automation-focused AI agents with observability"
+version = "0.2.0"
+description = "Batteries-included framework for building automation-focused AI agents with observability"
 readme = "README.md"
 authors = [
     { name = "trentleslie", email = "trentleslie@gmail.com" }
 ]
+license = { text = "MIT" }
 requires-python = ">=3.10"
+keywords = ["ai", "agents", "automation", "anthropic", "claude", "langfuse", "langgraph", "observability"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
 dependencies = [
     "langfuse>=3.0.0",
     "anthropic>=0.40.0",
@@ -17,6 +31,12 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/trentleslie/agent-workshop"
+Documentation = "https://github.com/trentleslie/agent-workshop#readme"
+Repository = "https://github.com/trentleslie/agent-workshop"
+Issues = "https://github.com/trentleslie/agent-workshop/issues"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
@@ -26,6 +46,22 @@ dev = [
 ]
 claude-agent = [
     "claude-agent-sdk>=0.1.0",
+]
+# Pre-built agents with prompt customization
+validators = [
+    "claude-agent-sdk>=0.1.0",
+    "pyyaml>=6.0",
+]
+pipelines = [
+    "claude-agent-sdk>=0.1.0",
+    "pyyaml>=6.0",
+    "langgraph>=0.2.0",
+]
+# All pre-built agents
+agents = [
+    "claude-agent-sdk>=0.1.0",
+    "pyyaml>=6.0",
+    "langgraph>=0.2.0",
 ]
 
 [tool.uv]

@@ -1,0 +1,148 @@
+# Example Prompt Configuration File for agent-workshop Pre-built Agents
+#
+# This file demonstrates how to customize prompts for pre-built agents.
+# Copy this file to 'prompts.yaml' in your project root and customize as needed.
+#
+# Usage:
+#   from agent_workshop.agents.validators import DeliverableValidator
+#   from agent_workshop import Config
+#
+#   # Automatically loads prompts.yaml if present
+#   validator = DeliverableValidator(Config())
+#
+#   # Or specify config file explicitly
+#   validator = DeliverableValidator(Config(), config_file="custom-prompts.yaml")
+
+# ==============================================================================
+# Deliverable Validator Configuration
+# ==============================================================================
+deliverable_validator:
+  # System prompt sets the agent's role and expertise
+  system_prompt: |
+    You are an expert deliverable validator with deep expertise in:
+    - Financial reporting and GAAP standards
+    - Regulatory compliance (SEC, SOX)
+    - Data verification and reconciliation
+
+    Provide thorough, compliance-focused feedback that ensures:
+    1. Accuracy of all data and calculations
+    2. Completeness of required disclosures
+    3. Compliance with regulatory standards
+    4. Professional formatting and clarity
+
+  # Validation criteria - what the agent checks for
+  validation_criteria:
+    - Executive summary clearly states financial position and key metrics
+    - All financial data includes verifiable sources and is properly reconciled
+    - Calculations are accurate, documented, and follow accounting standards
+    - Regulatory compliance statements and material disclosures are present
+    - Risk factors and material events are disclosed appropriately
+    - Financial statements follow required format and include all mandated sections
+
+  # User prompt template - the actual prompt sent to the LLM
+  # Available placeholders: {criteria}, {content}, {output_format}
+  user_prompt_template: |
+    Validate this financial deliverable based on these criteria:
+    {criteria}
+
+    Deliverable Content:
+    {content}
+
+    Provide:
+    1. Overall assessment (APPROVED or NEEDS_REVISION)
+    2. Compliance status for each criterion
+    3. Specific strengths
+    4. Critical issues (if any)
+    5. Improvement recommendations
+    6. Priority actions
+
+    Output format: {output_format}
+
+  # Output format: json, detailed, or summary
+  output_format: json
+
+# ==============================================================================
+# Validation Pipeline Configuration
+# ==============================================================================
+validation_pipeline:
+  # Quick scan prompt - first step in the pipeline
+  # Available placeholder: {content}
+  quick_scan_prompt: |
+    Perform a RAPID COMPLIANCE SCAN of this financial deliverable.
+
+    Check for:
+    1. Presence of required sections (Balance Sheet, Income Statement, Cash Flow)
+    2. Material omissions or obvious errors
+    3. Format compliance with regulatory standards
+    4. Critical red flags requiring immediate attention
+
+    Content:
+    {content}
+
+    Provide a 2-3 sentence assessment focusing ONLY on critical issues.
+    Flag any deal-breaker problems that require immediate revision.
+
+  # Detailed verify prompt - second step in the pipeline
+  # Available placeholders: {scan_result}, {content}
+  detailed_verify_prompt: |
+    Based on the initial scan, perform a DETAILED COMPLIANCE VERIFICATION.
+
+    Initial Scan Results:
+    {scan_result}
+
+    Original Financial Deliverable:
+    {content}
+
+    Provide a comprehensive analysis including:
+    1. Overall Assessment: APPROVED, CONDITIONAL_APPROVAL, or NEEDS_REVISION
+    2. Compliance Status: For each regulatory requirement
+    3. Strengths: What was done well
+    4. Critical Issues: Problems that must be fixed
+    5. Recommendations: Specific improvements with examples
+    6. Priority Actions: Ordered list of next steps
+
+    Format as JSON with keys: status, compliance_status, strengths, critical_issues, recommendations, priority_actions
+
+# ==============================================================================
+# Alternative Example: Research Paper Validation
+# ==============================================================================
+# Uncomment and customize for research paper validation:
+#
+# deliverable_validator:
+#   system_prompt: |
+#     You are an academic research validator with expertise in:
+#     - Research methodology and scientific rigor
+#     - Citation standards (APA, MLA, Chicago)
+#     - Academic writing conventions
+#     - Reproducibility and peer review standards
+#
+#   validation_criteria:
+#     - Abstract summarizes research question, methods, findings clearly
+#     - Literature review is comprehensive and properly cited
+#     - Methodology is detailed and reproducible
+#     - Results include appropriate statistical analysis
+#     - Discussion acknowledges limitations
+#     - References are complete and properly formatted
+#
+#   output_format: detailed
+
+# ==============================================================================
+# Alternative Example: Technical Specification Validation
+# ==============================================================================
+# Uncomment and customize for technical spec validation:
+#
+# deliverable_validator:
+#   system_prompt: |
+#     You are a technical documentation validator with expertise in:
+#     - Software architecture and system design
+#     - API documentation standards
+#     - Security and compliance requirements
+#
+#   validation_criteria:
+#     - Requirements are specific and testable (SMART criteria)
+#     - Architecture diagrams explain system components clearly
+#     - API documentation is complete with examples
+#     - Security considerations are addressed
+#     - Error handling and edge cases are documented
+#
+#   output_format: detailed

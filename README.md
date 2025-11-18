@@ -1,11 +1,13 @@
 # agent-workshop
 
-Cost-effective framework for building automation-focused AI agents with full observability.
+Batteries-included framework for building automation-focused AI agents with full observability.
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > **📦 Install as a Package**: Users should install agent-workshop via PyPI (`uv add agent-workshop` or `pip install agent-workshop`), not clone this repository. This repo is for framework development only. See [Quick Start](#quick-start) for the correct workflow.
+
+> **🆕 NEW in v0.2.0**: Pre-built agents with customizable prompts! Install `agent-workshop[agents]` to get production-ready validators and pipelines you can use immediately or customize for your needs.
 
 ## Features
 
@@ -31,28 +33,100 @@ Cost-effective framework for building automation-focused AI agents with full obs
 - 10-100x faster than pip/poetry
 - Reproducible environments
 
+🤖 **Pre-built Agents (NEW in v0.2.0)**
+- Production-ready validators and pipelines
+- Customizable prompts via env vars, YAML, or code
+- Built-in presets for common use cases
+- 5-minute setup to first validation
+
 ## Quick Start
 
-**Important**: Users should **install agent-workshop as a package**, not clone this repository. This repo is for framework development only.
+### Option 1: Pre-built Agents (Fastest - 5 minutes)
 
-### Installation
+**Perfect for:** Getting started quickly, common validation tasks, learning the framework
 
 ```bash
-# Create your project
-mkdir my-research-agents
-cd my-research-agents
+# Install with pre-built agents
+uv add 'agent-workshop[agents]'
 
-# Initialize with UV
-uv init
+# Configure environment
+cat > .env.development << 'EOF'
+AGENT_WORKSHOP_ENV=development
+CLAUDE_SDK_ENABLED=true
+CLAUDE_MODEL=sonnet
 
-# Install agent-workshop from PyPI
-uv add agent-workshop
+# Langfuse (optional)
+LANGFUSE_ENABLED=true
+LANGFUSE_PUBLIC_KEY=your_public_key
+LANGFUSE_SECRET_KEY=your_secret_key
+LANGFUSE_HOST=https://cloud.langfuse.com
+EOF
 
-# Or with pip
-pip install agent-workshop
+# Use immediately with built-in preset
+python -c "
+import asyncio
+from agent_workshop.agents.validators import DeliverableValidator
+from agent_workshop.agents.validators.presets import get_preset
+from agent_workshop import Config
+
+async def main():
+    # Use financial report preset
+    preset = get_preset('financial_report')
+    validator = DeliverableValidator(Config(), **preset)
+
+    result = await validator.run('Your financial report content...')
+    print(result)
+
+asyncio.run(main())
+"
 ```
 
-### Simple Agent (80% use case)
+**Available presets:**
+- `financial_report` - Financial reports and statements (GAAP, SEC compliance)
+- `research_paper` - Academic research papers (methodology, citations)
+- `technical_spec` - Technical documentation (API docs, architecture)
+- `marketing_content` - Marketing materials (brand voice, SEO, CTAs)
+- `legal_document` - Legal documents (contracts, compliance)
+- `general` - General-purpose validation
+
+**Customize via YAML config:**
+```yaml
+# prompts.yaml
+deliverable_validator:
+  system_prompt: "Custom system prompt for your use case..."
+  validation_criteria:
+    - "Custom criterion 1"
+    - "Custom criterion 2"
+  output_format: json
+```
+
+```python
+from agent_workshop.agents.validators import DeliverableValidator
+from agent_workshop import Config
+
+# Automatically loads prompts.yaml if present
+validator = DeliverableValidator(Config())
+result = await validator.run(content)
+```
+
+See [prompts.yaml.example](https://github.com/trentleslie/agent-workshop/blob/main/prompts.yaml.example) for full configuration options.
+
+---
+
+### Option 2: Custom Agents (Full Flexibility)
+
+**Perfect for:** Unique use cases, complex workflows, maximum customization
+
+**Installation:**
+```bash
+# Install core framework (no pre-built agents)
+uv add agent-workshop
+
+# Or install with Claude SDK for development
+uv add 'agent-workshop[claude-agent]'
+```
+
+**Simple Agent (80% use case):**
 
 ```python
 from agent_workshop import Agent, Config
@@ -110,6 +184,62 @@ pipeline = ValidationPipeline(Config())
 result = await pipeline.run({"content": report})
 ```
 
+---
+
+## Pre-built Agents Reference
+
+### DeliverableValidator
+
+Production-ready validator for documents with customizable prompts and criteria.
+
+**Usage:**
+```python
+from agent_workshop.agents.validators import DeliverableValidator
+from agent_workshop import Config
+
+# Option 1: Use preset
+from agent_workshop.agents.validators.presets import get_preset
+preset = get_preset("financial_report")
+validator = DeliverableValidator(Config(), **preset)
+
+# Option 2: Custom prompts
+validator = DeliverableValidator(
+    config=Config(),
+    system_prompt="You are a compliance validator...",
+    validation_criteria=["Criterion 1", "Criterion 2"],
+    output_format="json"
+)
+
+# Option 3: YAML config (loads prompts.yaml automatically)
+validator = DeliverableValidator(Config())
+
+result = await validator.run(document_content)
+```
+
+### ValidationPipeline
+
+Multi-step LangGraph pipeline for thorough validation.
+
+**Usage:**
+```python
+from agent_workshop.agents.pipelines import ValidationPipeline
+from agent_workshop import Config
+
+# Default prompts
+pipeline = ValidationPipeline(Config())
+
+# Custom prompts
+pipeline = ValidationPipeline(
+    config=Config(),
+    quick_scan_prompt="Custom scan for {content}",
+    detailed_verify_prompt="Custom verify for {scan_result} and {content}"
+)
+
+result = await pipeline.run({"content": document_content})
+```
+
+---
+
 ## Configuration
 
 ### Environment Setup
@@ -143,6 +273,120 @@ The framework automatically switches providers based on environment:
 
 - **Development** (`AGENT_WORKSHOP_ENV=development`): Uses Claude Agent SDK
 - **Production** (`AGENT_WORKSHOP_ENV=production`): Uses Anthropic API
+
+## Troubleshooting
+
+### Langfuse Authentication Warnings
+
+**Problem**: You see warnings like "Langfuse client initialized without public_key"
+
+**Solution**: This is usually caused by missing environment variables. The framework now automatically loads `.env` files before initializing Langfuse, but you need to ensure:
+
+1. **Create the correct .env file**:
+   ```bash
+   # For development
+   cp .env.example .env.development
+
+   # Edit and add your Langfuse credentials
+   LANGFUSE_PUBLIC_KEY=pk-lf-...
+   LANGFUSE_SECRET_KEY=sk-lf-...
+   ```
+
+2. **Set the environment**:
+   ```bash
+   export AGENT_WORKSHOP_ENV=development
+   ```
+
+3. **Test your Langfuse connection**:
+   ```python
+   from agent_workshop.utils import test_langfuse_connection
+
+   if test_langfuse_connection():
+       print("✓ Langfuse configured correctly")
+   else:
+       print("✗ Check your credentials")
+   ```
+
+**If you don't want to use Langfuse**:
+```bash
+# In your .env file
+LANGFUSE_ENABLED=false
+```
+
+### Environment Variables Not Loading
+
+**Problem**: Environment variables from `.env` files aren't being picked up
+
+**Cause**: The `.env` file needs to match your environment:
+- `AGENT_WORKSHOP_ENV=development` → looks for `.env.development`
+- `AGENT_WORKSHOP_ENV=production` → looks for `.env.production`
+- Default → looks for `.env`
+
+**Solution**:
+```bash
+# Option 1: Use environment-specific files (recommended)
+export AGENT_WORKSHOP_ENV=development
+# Then create .env.development
+
+# Option 2: Use generic .env file
+# Just create .env (no export needed)
+```
+
+### Provider Configuration Errors
+
+**Problem**: "No valid provider configuration found"
+
+**Solution**: Ensure you have credentials for at least one provider:
+
+**For Development**:
+```bash
+CLAUDE_SDK_ENABLED=true
+CLAUDE_MODEL=sonnet
+```
+
+**For Production**:
+```bash
+ANTHROPIC_API_KEY=your_key_here
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+```
+
+### Import Errors
+
+**Problem**: `ModuleNotFoundError: No module named 'agent_workshop'`
+
+**Solution**: Install the package (not clone the repo):
+```bash
+# Correct way (users)
+uv add agent-workshop
+
+# Or with pip
+pip install agent-workshop
+
+# Incorrect way
+git clone https://github.com/trentleslie/agent-workshop.git  # ❌ Only for contributors
+```
+
+### Claude Agent SDK Issues
+
+**Problem**: "claude-agent-sdk is not installed"
+
+**Solution**: Install with the optional extra:
+```bash
+uv add 'agent-workshop[claude-agent]'
+
+# Or with pip
+pip install 'agent-workshop[claude-agent]'
+```
+
+### Getting Help
+
+If you encounter other issues:
+1. Check the [examples](https://github.com/trentleslie/agent-workshop/tree/main/examples) in the repository
+2. Review the [documentation](https://github.com/trentleslie/agent-workshop/tree/main/docs)
+3. [Open an issue](https://github.com/trentleslie/agent-workshop/issues) with:
+   - Your Python version (`python --version`)
+   - Your environment configuration (`.env` file, with credentials redacted)
+   - Full error message and traceback
 
 ## Design Philosophy
 

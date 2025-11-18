@@ -10,7 +10,7 @@ from enum import Enum
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -132,6 +132,30 @@ class Config(BaseSettings):
         default="INFO",
         description="Logging level",
     )
+
+    @model_validator(mode="after")
+    def validate_langfuse_credentials(self):
+        """Validate Langfuse credentials if Langfuse is enabled."""
+        import warnings
+
+        if self.langfuse_enabled:
+            missing_credentials = []
+            if not self.langfuse_public_key:
+                missing_credentials.append("LANGFUSE_PUBLIC_KEY")
+            if not self.langfuse_secret_key:
+                missing_credentials.append("LANGFUSE_SECRET_KEY")
+
+            if missing_credentials:
+                warning_msg = (
+                    f"Langfuse is enabled but missing credentials: {', '.join(missing_credentials)}. "
+                    f"Observability will be disabled. Set these environment variables or disable "
+                    f"Langfuse with LANGFUSE_ENABLED=false"
+                )
+                warnings.warn(warning_msg, UserWarning, stacklevel=2)
+                # Disable Langfuse if credentials are missing to avoid repeated errors
+                self.langfuse_enabled = False
+
+        return self
 
     @property
     def is_development(self) -> bool:

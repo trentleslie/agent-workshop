@@ -4,7 +4,7 @@ requires-python = ">=3.10"
 
 [[package]]
 name = "agent-workshop"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -17,6 +17,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+agents = [
+    { name = "claude-agent-sdk" },
+    { name = "langgraph" },
+    { name = "pyyaml" },
+]
 claude-agent = [
     { name = "claude-agent-sdk" },
 ]
@@ -25,6 +30,15 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
+]
+pipelines = [
+    { name = "claude-agent-sdk" },
+    { name = "langgraph" },
+    { name = "pyyaml" },
+]
+validators = [
+    { name = "claude-agent-sdk" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -37,19 +51,27 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.40.0" },
+    { name = "claude-agent-sdk", marker = "extra == 'agents'", specifier = ">=0.1.0" },
     { name = "claude-agent-sdk", marker = "extra == 'claude-agent'", specifier = ">=0.1.0" },
+    { name = "claude-agent-sdk", marker = "extra == 'pipelines'", specifier = ">=0.1.0" },
+    { name = "claude-agent-sdk", marker = "extra == 'validators'", specifier = ">=0.1.0" },
     { name = "langfuse", specifier = ">=3.0.0" },
     { name = "langgraph", specifier = ">=0.2.0" },
+    { name = "langgraph", marker = "extra == 'agents'", specifier = ">=0.2.0" },
+    { name = "langgraph", marker = "extra == 'pipelines'", specifier = ">=0.2.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "pyyaml", marker = "extra == 'agents'", specifier = ">=6.0" },
+    { name = "pyyaml", marker = "extra == 'pipelines'", specifier = ">=6.0" },
+    { name = "pyyaml", marker = "extra == 'validators'", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
     { name = "tiktoken", specifier = ">=0.7.0" },
 ]
-provides-extras = ["dev", "claude-agent"]
+provides-extras = ["dev", "claude-agent", "validators", "pipelines", "agents"]
 
 [package.metadata.requires-dev]
 dev = [

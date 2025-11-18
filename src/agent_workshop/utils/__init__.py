@@ -7,6 +7,6 @@ Provides helpers for:
 - Cost estimation
 """
 
-from .langfuse_helpers import setup_langfuse
+from .langfuse_helpers import setup_langfuse, test_langfuse_connection
 
-__all__ = ["setup_langfuse"]
+__all__ = ["setup_langfuse", "test_langfuse_connection"]
