@@ -1,0 +1,182 @@
+# Software Dev PR Review Pipeline Blueprint
+# Converted from: blueprints/brainstorms/software_dev_pr_pipeline.md
+
+blueprint:
+  version: "1.0"
+  name: "pr_pipeline"
+  domain: "software_dev"
+  description: "Multi-step PR review pipeline with security scan, quality review, and summary generation. Uses LangGraph for state management across steps."
+  type: "langgraph"
+
+workflow:
+  state:
+    # Input fields
+    content: "str"
+    title: "str | None"
+    description: "str | None"
+    files_changed: "list[str] | None"
+    # Step outputs
+    security_result: "dict | None"
+    quality_result: "dict | None"
+    # Final output
+    final_result: "dict | None"
+
+  steps:
+    - name: "security_scan"
+      description: "Identify security vulnerabilities before quality review"
+      prompt: |
+        You are a security-focused code reviewer. Analyze this code for security vulnerabilities.
+
+        PR Title: {title}
+        PR Description: {description}
+
+        Code to Review:
+        ```
+        {content}
+        ```
+
+        Focus on:
+        1. Hardcoded credentials (API keys, passwords, tokens)
+        2. Injection vulnerabilities (SQL, command, XSS)
+        3. Authentication/authorization issues
+        4. Sensitive data exposure
+        5. Insecure configurations
+
+        Return JSON:
+        {{
+          "issues": [
+            {{
+              "severity": "critical|high|medium|low",
+              "category": "credentials|injection|auth|exposure|config",
+              "message": "description",
+              "line": number or null,
+              "suggestion": "how to fix"
+            }}
+          ],
+          "critical_count": number,
+          "high_count": number,
+          "summary": "brief security assessment"
+        }}
+      output_to_state: "security_result"
+
+    - name: "quality_review"
+      description: "Review code quality in context of security findings"
+      prompt: |
+        You are a code quality reviewer. Analyze this code for quality issues.
+
+        Security findings from previous step:
+        {security_result}
+
+        Code to Review:
+        ```
+        {content}
+        ```
+
+        Focus on (excluding security issues already identified):
+        1. Error handling and edge cases
+        2. Code clarity and readability
+        3. Resource management
+        4. Performance concerns
+        5. Code organization
+
+        Return JSON:
+        {{
+          "issues": [
+            {{
+              "severity": "high|medium|low",
+              "category": "error_handling|clarity|resources|performance|organization",
+              "message": "description",
+              "line": number or null,
+              "suggestion": "how to fix"
+            }}
+          ],
+          "summary": "brief quality assessment"
+        }}
+      output_to_state: "quality_result"
+
+    - name: "generate_summary"
+      description: "Consolidate findings into PR-ready feedback"
+      prompt: |
+        You are generating a PR review summary. Consolidate the findings into actionable feedback.
+
+        PR Title: {title}
+
+        Security Findings:
+        {security_result}
+
+        Quality Findings:
+        {quality_result}
+
+        Generate a comprehensive PR review.
+
+        Return JSON:
+        {{
+          "approved": boolean (false if any critical or high severity issues),
+          "recommendation": "approve|request_changes|comment",
+          "blocking_issues": number (count of critical + high),
+          "summary": "2-3 paragraph PR review comment suitable for GitHub"
+        }}
+      output_to_state: "final_result"
+
+  edges:
+    - from: "security_scan"
+      to: "quality_review"
+    - from: "quality_review"
+      to: "generate_summary"
+    - from: "generate_summary"
+      to: "END"
+
+  entry_point: "security_scan"
+
+tests:
+  fixtures:
+    - name: "clean_code"
+      value: '{"content": "def add(a, b):\\n    return a + b", "title": "Add helper function"}'
+
+    - name: "security_issues"
+      value: '{"content": "API_KEY = ''secret''\\ndb.execute(f''SELECT * FROM users WHERE id = {id}'')", "title": "Add user query"}'
+
+    - name: "quality_issues"
+      value: '{"content": "def f(x):\\n    return json.loads(x)[''a''][''b''][''c'']", "title": "Parse nested data"}'
+
+  test_cases:
+    - name: "test_clean_code_approved"
+      input: "{{clean_code}}"
+      expected_output:
+        approved: true
+        recommendation: "approve"
+
+    - name: "test_security_issues_blocked"
+      input: "{{security_issues}}"
+      expected_output:
+        approved: false
+        recommendation: "request_changes"
+
+    - name: "test_quality_issues_flagged"
+      input: "{{quality_issues}}"
+      expected_output:
+        approved: true
+
+documentation:
+  usage_example: |
+    from agent_workshop import Config
+    from agent_workshop.agents.software_dev import PRPipeline
+
+    config = Config()
+    pipeline = PRPipeline(config)
+
+    result = await pipeline.run({
+        "content": code_diff,
+        "title": "Add authentication feature",
+        "description": "Implements JWT-based auth"
+    })
+
+    print(f"Approved: {result['approved']}")
+    print(f"Recommendation: {result['recommendation']}")
+    print(f"Summary: {result['summary']}")
+
+  notes:
+    - "Pipeline runs 3 sequential LLM calls with state threading"
+    - "Each step has access to previous step results"
+    - "Security issues are identified first, informing quality review"
+    - "Final summary consolidates all findings for PR comment"

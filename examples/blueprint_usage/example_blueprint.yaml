@@ -1,0 +1,86 @@
+# Example Blueprint for Testing
+# This is a minimal blueprint to demonstrate the AgentBuilder system.
+#
+# Usage:
+#   uv run python examples/blueprint_usage/generate_agent.py examples/blueprint_usage/example_blueprint.yaml
+
+blueprint:
+  version: "1.0"
+  name: "example_analyzer"
+  domain: "demo"
+  description: "A simple example agent that analyzes text input"
+  type: "simple"
+
+agent:
+  class_name: "ExampleAnalyzer"
+
+  input:
+    type: "str"
+    description: "Text content to analyze"
+
+  output:
+    type: "dict"
+    description: "Analysis results"
+    schema:
+      word_count: "int"
+      sentiment: "str"
+      key_topics: "list[str]"
+      summary: "str"
+
+  prompts:
+    system_prompt: |
+      You are a text analysis assistant. You analyze text and provide structured insights.
+      Always respond with valid JSON.
+    user_prompt_template: |
+      Analyze the following text and provide your analysis.
+
+      Criteria to evaluate:
+      {criteria}
+
+      Text to analyze:
+      {content}
+
+      Respond with JSON containing:
+      - word_count: number of words
+      - sentiment: "positive", "negative", or "neutral"
+      - key_topics: list of main topics discussed
+      - summary: brief summary of the text
+
+  validation_criteria:
+    - "Count the words accurately"
+    - "Identify the overall sentiment"
+    - "Extract key topics and themes"
+    - "Provide a concise summary"
+
+  llm_config:
+    temperature: 0.3
+    max_tokens: 1000
+
+dependencies: []
+
+tests:
+  fixtures:
+    - name: "positive_text"
+      value: "I absolutely love this product! It's amazing and works perfectly."
+    - name: "negative_text"
+      value: "This is terrible. Nothing works and I'm very disappointed."
+  test_cases:
+    - name: "test_positive_sentiment"
+      input: "{{positive_text}}"
+      expected:
+        sentiment: "positive"
+    - name: "test_negative_sentiment"
+      input: "{{negative_text}}"
+      expected:
+        sentiment: "negative"
+
+documentation:
+  usage_example: |
+    from agent_workshop import Config
+    from agents.demo.example_analyzer import ExampleAnalyzer
+
+    analyzer = ExampleAnalyzer(Config())
+    result = await analyzer.run("Your text here...")
+  notes:
+    - "This is a demonstration blueprint"
+    - "Generated code may require adjustment for production use"

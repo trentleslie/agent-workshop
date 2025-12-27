@@ -1,0 +1,221 @@
+{# LangGraph Agent Template for agent-workshop #}
+{# Generated from: blueprints/specs/{{ blueprint.name }}.yaml #}
+"""
+{{ blueprint.description }}
+
+Blueprint: blueprints/specs/{{ blueprint.domain }}_{{ blueprint.name }}.yaml
+
+Usage:
+    from agent_workshop import Config
+    from agent_workshop.agents.{{ blueprint.domain }} import {{ class_name }}
+
+    pipeline = {{ class_name }}(Config())
+    result = await pipeline.run({
+        "content": input_content,
+        # ... other input fields
+    })
+"""
+
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import TypedDict, Optional, Dict, Any, List
+
+from langgraph.graph import StateGraph, END
+
+from agent_workshop.workflows import LangGraphAgent
+from agent_workshop import Config
+
+
+class {{ class_name }}State(TypedDict):
+    """State object for the {{ class_name }} pipeline."""
+{% for field, type_hint in workflow.state.items() %}
+    {{ field }}: {{ type_hint }}
+{% endfor %}
+
+
+class {{ class_name }}(LangGraphAgent):
+    """
+    {{ blueprint.description }}
+
+    This pipeline performs analysis in {{ workflow.steps | length }} stages:
+{% for step in workflow.steps %}
+    {{ loop.index }}. {{ step.name | replace('_', ' ') | title }} - {{ step.description }}
+{% endfor %}
+
+    Each step has access to previous step results, enabling contextual analysis.
+
+    Configuration Priority (highest to lowest):
+    1. Constructor parameters
+    2. YAML config file (prompts.yaml)
+    3. Environment variables
+    4. Built-in defaults
+    """
+
+{% for step in workflow.steps %}
+    DEFAULT_{{ step.name | upper }}_PROMPT = """{{ step.prompt | replace('\n', '\n') }}"""
+
+{% endfor %}
+
+    def __init__(
+        self,
+        config: Config = None,
+{% for step in workflow.steps %}
+        {{ step.name }}_prompt: Optional[str] = None,
+{% endfor %}
+        config_file: Optional[str] = None,
+    ):
+        """
+        Initialize the {{ class_name }}.
+
+        Args:
+            config: Agent-workshop Config
+{% for step in workflow.steps %}
+            {{ step.name }}_prompt: Custom prompt for {{ step.name }} step
+{% endfor %}
+            config_file: Path to YAML configuration file
+        """
+        # Load configuration before super().__init__() which calls build_graph()
+        prompt_config = self._load_prompt_config(config_file=config_file)
+
+{% for step in workflow.steps %}
+        self.{{ step.name }}_prompt = (
+            {{ step.name }}_prompt
+            or prompt_config.get("{{ step.name }}_prompt")
+            or os.getenv("{{ blueprint.name | upper }}_{{ step.name | upper }}_PROMPT")
+            or self.DEFAULT_{{ step.name | upper }}_PROMPT
+        )
+
+{% endfor %}
+        super().__init__(config)
+
+    def _load_prompt_config(self, config_file: Optional[str] = None) -> Dict[str, Any]:
+        """Load prompt configuration from YAML file."""
+        config: Dict[str, Any] = {}
+
+        # Load from specified config file
+        if config_file and Path(config_file).exists():
+            try:
+                import yaml
+                with open(config_file) as f:
+                    yaml_config = yaml.safe_load(f)
+                    config.update(yaml_config.get("{{ blueprint.name }}", {}))
+            except ImportError:
+                pass
+
+        # Try default config file location
+        elif Path("prompts.yaml").exists():
+            try:
+                import yaml
+                with open("prompts.yaml") as f:
+                    yaml_config = yaml.safe_load(f)
+                    config.update(yaml_config.get("{{ blueprint.name }}", {}))
+            except ImportError:
+                pass
+
+        return config
+
+    def build_graph(self):
+        """Build the LangGraph workflow."""
+        workflow = StateGraph({{ class_name }}State)
+
+        # Add nodes for each step
+{% for step in workflow.steps %}
+        workflow.add_node("{{ step.name }}", self.{{ step.name }})
+{% endfor %}
+
+        # Define edges
+{% for edge in workflow.edges %}
+{% if edge.to_step == 'END' %}
+        workflow.add_edge("{{ edge.from_step }}", END)
+{% else %}
+        workflow.add_edge("{{ edge.from_step }}", "{{ edge.to_step }}")
+{% endif %}
+{% endfor %}
+
+        # Set entry point
+        workflow.set_entry_point("{{ workflow.entry_point }}")
+
+        return workflow.compile()
+
+{% for step in workflow.steps %}
+    async def {{ step.name }}(self, state: {{ class_name }}State) -> {{ class_name }}State:
+        """
+        Step {{ loop.index }}: {{ step.description }}
+
+        Args:
+            state: Current pipeline state
+
+        Returns:
+            Updated state with {{ step.output_to_state }}
+        """
+        # Format prompt with state values
+        prompt = self.{{ step.name }}_prompt.format(
+            **{k: (json.dumps(v, indent=2) if isinstance(v, dict) else (v or 'N/A'))
+               for k, v in state.items() if v is not None}
+        )
+
+        messages = [{"role": "user", "content": prompt}]
+
+        result = await self.provider.complete(messages, temperature=0.3)
+
+        # Parse JSON response
+        parsed = self._parse_json_response(result)
+
+        return {
+            **state,
+            "{{ step.output_to_state }}": parsed,
+        }
+
+{% endfor %}
+    def _parse_json_response(self, response: str) -> Dict[str, Any]:
+        """Parse JSON from LLM response."""
+        text = response.strip()
+
+        # Handle markdown code blocks
+        if "```json" in text:
+            start = text.find("```json") + 7
+            end = text.find("```", start)
+            if end > start:
+                text = text[start:end].strip()
+        elif "```" in text:
+            start = text.find("```") + 3
+            end = text.find("```", start)
+            if end > start:
+                text = text[start:end].strip()
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return {
+                "error": "Unable to parse response",
+                "raw": text[:500],
+            }
+
+    async def run(self, input: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute the {{ blueprint.name | replace('_', ' ') }} pipeline.
+
+        Args:
+            input: Dictionary with input fields
+
+        Returns:
+            Dictionary with final results
+        """
+        # Initialize state with input
+        state: {{ class_name }}State = {
+{% for field, type_hint in workflow.state.items() %}
+{% if 'None' in type_hint %}
+            "{{ field }}": input.get("{{ field }}"),
+{% else %}
+            "{{ field }}": input.get("{{ field }}", ""),
+{% endif %}
+{% endfor %}
+        }
+
+        # Run the workflow
+        result = await super().run(state)
+
+        # Return final_result if present, otherwise full state
+        return result.get("final_result", result)

@@ -1,6 +1,6 @@
 [project]
 name = "agent-workshop"
-version = "0.2.0"
+version = "0.3.0"
 description = "Batteries-included framework for building automation-focused AI agents with observability"
 readme = "README.md"
 authors = [
@@ -29,6 +29,8 @@ dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "python-dotenv>=1.0.0",
+    "jinja2>=3.1.6",
+    "claude-code-sdk>=0.0.25",
 ]
 
 [project.urls]
