@@ -98,7 +98,7 @@ workflow:
       action:
         type: "shell"
         shell:
-          command: "git commit -m \"{commit_message}\""
+          command: "git commit -m '{commit_message}'"
           timeout_seconds: 60
           allowed_exit_codes: [0]
       action_output:
@@ -124,7 +124,7 @@ workflow:
       action:
         type: "shell"
         shell:
-          command: "gh pr create --base {base_branch} --title \"Release v{version}\" --body \"{pr_body}\""
+          command: "gh pr create --base '{base_branch}' --title 'Release v{version}' --body '{pr_body}'"
           timeout_seconds: 60
           allowed_exit_codes: [0]
       action_output:

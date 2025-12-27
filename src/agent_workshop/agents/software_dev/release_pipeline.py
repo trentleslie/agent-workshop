@@ -126,11 +126,9 @@ Return JSON:
 
     async def create_branch(self, state: ReleasePipelineState) -> ReleasePipelineState:
         """Create release branch"""
-        # Format command with state values
-        command = """git checkout -b release/v{version}""".format(
-            **{k: (str(v) if v is not None else "")
-               for k, v in state.items()}
-        )
+        # Format command with state values - escape version for safety
+        version = state.get("version") or ""
+        command = f"git checkout -b {shlex.quote(f'release/v{version}')}"
 
         stdout, stderr, exit_code = await self._run_shell(
             command,
@@ -172,11 +170,9 @@ Return JSON:
 
     async def push_branch(self, state: ReleasePipelineState) -> ReleasePipelineState:
         """Push release branch to remote"""
-        # Format command with state values
-        command = """git push -u origin release/v{version}""".format(
-            **{k: (str(v) if v is not None else "")
-               for k, v in state.items()}
-        )
+        # Format command with state values - escape version for safety
+        version = state.get("version") or ""
+        command = f"git push -u origin {shlex.quote(f'release/v{version}')}"
 
         stdout, stderr, exit_code = await self._run_shell(
             command,
@@ -188,11 +184,11 @@ Return JSON:
 
     async def create_pr(self, state: ReleasePipelineState) -> ReleasePipelineState:
         """Create pull request via GitHub CLI"""
-        # Format command with state values - use shlex for safe quoting
+        # Format command with state values - escape all values for safety
         version = state.get("version") or ""
         base_branch = state.get("base_branch") or "main"
         pr_body = state.get("pr_body") or ""
-        command = f"gh pr create --base {base_branch} --title {shlex.quote(f'Release v{version}')} --body {shlex.quote(pr_body)}"
+        command = f"gh pr create --base {shlex.quote(base_branch)} --title {shlex.quote(f'Release v{version}')} --body {shlex.quote(pr_body)}"
 
         stdout, stderr, exit_code = await self._run_shell(
             command,

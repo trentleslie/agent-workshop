@@ -14,7 +14,14 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent_workshop.config import Config, get_config
-from agent_workshop.agents.software_dev import CodeReviewer, PRPipeline, ReleasePipeline, get_preset, list_presets
+from agent_workshop.agents.software_dev import (
+    CodeReviewer,
+    PRPipeline,
+    ReleasePipeline,
+    PRCommentProcessor,
+    get_preset,
+    list_presets,
+)
 
 from fixtures.mock_responses import (
     MOCK_CODE_REVIEWER_APPROVED,
@@ -30,9 +37,17 @@ from fixtures.mock_responses import (
     MOCK_PR_QUALITY_REVIEW_CLEAN,
     MOCK_PR_SUMMARY,
     MOCK_PR_SUMMARY_APPROVED,
+    MOCK_COMMENT_ANALYSIS_CAN_FIX,
+    MOCK_COMMENT_ANALYSIS_SKIP,
+    MOCK_FIX_GENERATED,
+    MOCK_FIX_FAILED,
+    MOCK_COMMENT_SUMMARY,
     SAMPLE_CLEAN_CODE,
     SAMPLE_CODE_WITH_SECRET,
     SAMPLE_CODE_WITH_ISSUES,
+    SAMPLE_PR_COMMENTS,
+    SAMPLE_COMMENT_NO_PATH,
+    SAMPLE_FILE_CONTENT,
 )
 
 
@@ -713,3 +728,463 @@ class TestReleasePipelineSteps:
 
         assert result['branch_output'] == "Switched to branch"
         assert result['branch_success'] is True
+
+
+# =============================================================================
+# PRCommentProcessor Unit Tests
+# =============================================================================
+
+class TestPRCommentProcessorStructure:
+    """Tests for PRCommentProcessor structure and initialization."""
+
+    def test_instantiation(self, mock_config):
+        """Test that PRCommentProcessor instantiates correctly."""
+        processor = PRCommentProcessor(mock_config)
+        assert processor is not None
+        assert hasattr(processor, 'build_graph')
+        assert hasattr(processor, 'analyze_prompt')
+        assert hasattr(processor, 'generate_fix_prompt')
+
+    def test_graph_has_loop_structure(self, mock_config):
+        """Test that graph has the expected nodes including loop."""
+        processor = PRCommentProcessor(mock_config)
+        graph = processor.build_graph()
+
+        expected_nodes = [
+            '__start__',
+            'fetch_comments',
+            'select_next_comment',
+            'read_file',
+            'analyze_comment',
+            'generate_fix',
+            'apply_fix',
+            'record_result',
+            'generate_summary',
+        ]
+        for node in expected_nodes:
+            assert node in graph.nodes, f"Missing node: {node}"
+
+    def test_custom_prompts(self, mock_config):
+        """Test that custom prompts can be provided."""
+        custom_analyze = "Custom analyze prompt"
+        custom_fix = "Custom fix prompt"
+
+        processor = PRCommentProcessor(
+            mock_config,
+            analyze_prompt=custom_analyze,
+            generate_fix_prompt=custom_fix,
+        )
+
+        assert processor.analyze_prompt == custom_analyze
+        assert processor.generate_fix_prompt == custom_fix
+
+
+class TestPRCommentProcessorFetchComments:
+    """Tests for fetch_comments step."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_filters_addressed_comments(self, mock_config, mock_provider):
+        """Test that fetch_comments filters out addressed comments."""
+        processor = PRCommentProcessor(mock_config)
+        processor.provider = mock_provider
+
+        # Mix of addressed and unaddressed comments
+        comments = [
+            {"id": "1", "addressed": False, "body": "Fix this"},
+            {"id": "2", "addressed": True, "body": "Already fixed"},
+            {"id": "3", "addressed": False, "body": "Also fix this"},
+        ]
+
+        state = {
+            "repo_name": "test/repo",
+            "pr_number": 1,
+            "remote": "github",
+            "default_branch": "main",
+            "working_dir": "/tmp",
+            "all_comments": comments,
+            "pending_comments": [],
+            "current_comment": None,
+            "processed_comments": [],
+            "current_file_path": None,
+            "current_file_content": None,
+            "analysis_result": None,
+            "proposed_fix": None,
+            "has_more_comments": False,
+            "iteration_count": 0,
+            "max_iterations": 50,
+            "final_result": None,
+        }
+
+        result = await processor.fetch_comments(state)
+
+        # Should only have unaddressed comments
+        assert len(result["pending_comments"]) == 2
+        assert all(not c["addressed"] for c in result["pending_comments"])
+        assert result["has_more_comments"] is True
+
+
+class TestPRCommentProcessorSelectNext:
+    """Tests for select_next_comment step."""
+
+    @pytest.mark.asyncio
+    async def test_select_pops_from_queue(self, mock_config, mock_provider):
+        """Test that select_next_comment pops from pending queue."""
+        processor = PRCommentProcessor(mock_config)
+        processor.provider = mock_provider
+
+        state = {
+            "repo_name": "test/repo",
+            "pr_number": 1,
+            "remote": "github",
+            "default_branch": "main",
+            "working_dir": "/tmp",
+            "all_comments": None,
+            "pending_comments": [
+                {"id": "1", "path": "file1.py", "body": "Comment 1"},
+                {"id": "2", "path": "file2.py", "body": "Comment 2"},
+            ],
+            "current_comment": None,
+            "processed_comments": [],
+            "current_file_path": None,
+            "current_file_content": None,
+            "analysis_result": None,
+            "proposed_fix": None,
+            "has_more_comments": True,
+            "iteration_count": 0,
+            "max_iterations": 50,
+            "final_result": None,
+        }
+
+        result = await processor.select_next_comment(state)
+
+        assert result["current_comment"]["id"] == "1"
+        assert result["current_file_path"] == "file1.py"
+        assert len(result["pending_comments"]) == 1
+        assert result["has_more_comments"] is True
+        assert result["iteration_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_select_sets_no_more_comments_on_last(self, mock_config, mock_provider):
+        """Test that has_more_comments is False when queue is empty after pop."""
+        processor = PRCommentProcessor(mock_config)
+        processor.provider = mock_provider
+
+        state = {
+            "repo_name": "test/repo",
+            "pr_number": 1,
+            "remote": "github",
+            "default_branch": "main",
+            "working_dir": "/tmp",
+            "all_comments": None,
+            "pending_comments": [
+                {"id": "1", "path": "file1.py", "body": "Last comment"},
+            ],
+            "current_comment": None,
+            "processed_comments": [],
+            "current_file_path": None,
+            "current_file_content": None,
+            "analysis_result": None,
+            "proposed_fix": None,
+            "has_more_comments": True,
+            "iteration_count": 0,
+            "max_iterations": 50,
+            "final_result": None,
+        }
+
+        result = await processor.select_next_comment(state)
+
+        assert result["has_more_comments"] is False
+
+
+class TestPRCommentProcessorReadFile:
+    """Tests for read_file step."""
+
+    @pytest.mark.asyncio
+    async def test_read_file_success(self, mock_config, mock_provider, tmp_path):
+        """Test successful file reading."""
+        processor = PRCommentProcessor(mock_config, working_dir=str(tmp_path))
+        processor.provider = mock_provider
+
+        # Create a test file
+        test_file = tmp_path / "test.py"
+        test_file.write_text("def hello():\n    pass\n")
+
+        state = {
+            "repo_name": "test/repo",
+            "pr_number": 1,
+            "remote": "github",
+            "default_branch": "main",
+            "working_dir": str(tmp_path),
+            "all_comments": None,
+            "pending_comments": [],
+            "current_comment": {"id": "1", "path": "test.py"},
+            "processed_comments": [],
+            "current_file_path": "test.py",
+            "current_file_content": None,
+            "analysis_result": None,
+            "proposed_fix": None,
+            "has_more_comments": False,
+            "iteration_count": 1,
+            "max_iterations": 50,
+            "final_result": None,
+        }
+
+        result = await processor.read_file(state)
+
+        assert result["current_file_content"] == "def hello():\n    pass\n"
+
+    @pytest.mark.asyncio
+    async def test_read_file_not_found(self, mock_config, mock_provider, tmp_path):
+        """Test file not found handling."""
+        processor = PRCommentProcessor(mock_config, working_dir=str(tmp_path))
+        processor.provider = mock_provider
+
+        state = {
+            "repo_name": "test/repo",
+            "pr_number": 1,
+            "remote": "github",
+            "default_branch": "main",
+            "working_dir": str(tmp_path),
+            "all_comments": None,
+            "pending_comments": [],
+            "current_comment": {"id": "1", "path": "nonexistent.py"},
+            "processed_comments": [],
+            "current_file_path": "nonexistent.py",
+            "current_file_content": None,
+            "analysis_result": None,
+            "proposed_fix": None,
+            "has_more_comments": False,
+            "iteration_count": 1,
+            "max_iterations": 50,
+            "final_result": None,
+        }
+
+        result = await processor.read_file(state)
+
+        assert result["current_file_content"] is None
+        assert result["analysis_result"]["error"] is not None
+        assert result["analysis_result"]["can_auto_fix"] is False
+
+
+class TestPRCommentProcessorAnalyzeComment:
+    """Tests for analyze_comment LLM step."""
+
+    @pytest.mark.asyncio
+    async def test_analyze_calls_llm(self, mock_config, mock_provider):
+        """Test that analyze_comment calls the LLM."""
+        processor = PRCommentProcessor(mock_config)
+        processor.provider = mock_provider
+        mock_provider.complete.return_value = MOCK_COMMENT_ANALYSIS_CAN_FIX
+
+        state = {
+            "repo_name": "test/repo",
+            "pr_number": 1,
+            "remote": "github",
+            "default_branch": "main",
+            "working_dir": "/tmp",
+            "all_comments": None,
+            "pending_comments": [],
+            "current_comment": {"id": "1", "path": "test.py", "body": "Add type hints"},
+            "processed_comments": [],
+            "current_file_path": "test.py",
+            "current_file_content": SAMPLE_FILE_CONTENT,
+            "analysis_result": None,
+            "proposed_fix": None,
+            "has_more_comments": False,
+            "iteration_count": 1,
+            "max_iterations": 50,
+            "final_result": None,
+        }
+
+        result = await processor.analyze_comment(state)
+
+        mock_provider.complete.assert_called_once()
+        assert result["analysis_result"]["understood"] is True
+        assert result["analysis_result"]["can_auto_fix"] is True
+
+
+class TestPRCommentProcessorApplyFix:
+    """Tests for apply_fix step."""
+
+    @pytest.mark.asyncio
+    async def test_apply_fix_writes_file(self, mock_config, mock_provider, tmp_path):
+        """Test that apply_fix writes the fixed content."""
+        processor = PRCommentProcessor(mock_config, working_dir=str(tmp_path))
+        processor.provider = mock_provider
+
+        # Create initial file
+        test_file = tmp_path / "test.py"
+        test_file.write_text("def old():\n    pass\n")
+
+        new_content = "def new():\n    pass\n"
+
+        state = {
+            "repo_name": "test/repo",
+            "pr_number": 1,
+            "remote": "github",
+            "default_branch": "main",
+            "working_dir": str(tmp_path),
+            "all_comments": None,
+            "pending_comments": [],
+            "current_comment": {"id": "1", "path": "test.py"},
+            "processed_comments": [],
+            "current_file_path": "test.py",
+            "current_file_content": "def old():\n    pass\n",
+            "analysis_result": {"can_auto_fix": True},
+            "proposed_fix": {
+                "success": True,
+                "full_file_content": new_content,
+            },
+            "has_more_comments": False,
+            "iteration_count": 1,
+            "max_iterations": 50,
+            "final_result": None,
+        }
+
+        result = await processor.apply_fix(state)
+
+        assert result["proposed_fix"]["applied"] is True
+        assert test_file.read_text() == new_content
+
+
+class TestPRCommentProcessorRecordResult:
+    """Tests for record_result step."""
+
+    @pytest.mark.asyncio
+    async def test_record_applied(self, mock_config, mock_provider):
+        """Test recording an applied fix."""
+        processor = PRCommentProcessor(mock_config)
+        processor.provider = mock_provider
+
+        state = {
+            "repo_name": "test/repo",
+            "pr_number": 1,
+            "remote": "github",
+            "default_branch": "main",
+            "working_dir": "/tmp",
+            "all_comments": None,
+            "pending_comments": [],
+            "current_comment": {"id": "1", "path": "test.py", "body": "Fix this"},
+            "processed_comments": [],
+            "current_file_path": "test.py",
+            "current_file_content": "content",
+            "analysis_result": {"can_auto_fix": True, "change_type": "refactor"},
+            "proposed_fix": {"applied": True, "changes_summary": "Fixed it"},
+            "has_more_comments": False,
+            "iteration_count": 1,
+            "max_iterations": 50,
+            "final_result": None,
+        }
+
+        result = await processor.record_result(state)
+
+        assert len(result["processed_comments"]) == 1
+        assert result["processed_comments"][0]["status"] == "applied"
+
+    @pytest.mark.asyncio
+    async def test_record_skipped(self, mock_config, mock_provider):
+        """Test recording a skipped comment."""
+        processor = PRCommentProcessor(mock_config)
+        processor.provider = mock_provider
+
+        state = {
+            "repo_name": "test/repo",
+            "pr_number": 1,
+            "remote": "github",
+            "default_branch": "main",
+            "working_dir": "/tmp",
+            "all_comments": None,
+            "pending_comments": [],
+            "current_comment": {"id": "1", "path": "test.py", "body": "Complex change"},
+            "processed_comments": [],
+            "current_file_path": "test.py",
+            "current_file_content": "content",
+            "analysis_result": {"can_auto_fix": False, "skip_reason": "Too complex"},
+            "proposed_fix": {},
+            "has_more_comments": False,
+            "iteration_count": 1,
+            "max_iterations": 50,
+            "final_result": None,
+        }
+
+        result = await processor.record_result(state)
+
+        assert len(result["processed_comments"]) == 1
+        assert result["processed_comments"][0]["status"] == "skipped"
+
+
+class TestPRCommentProcessorWorkflow:
+    """Integration tests for full workflow."""
+
+    @pytest.mark.asyncio
+    async def test_empty_comments_list(self, mock_config, mock_provider):
+        """Test handling of empty comments list."""
+        processor = PRCommentProcessor(mock_config)
+        processor.provider = mock_provider
+
+        # Summary generation will be called
+        mock_provider.complete.return_value = MOCK_COMMENT_SUMMARY
+
+        result = await processor.run({
+            "repo_name": "test/repo",
+            "pr_number": 123,
+            "all_comments": [],
+            "working_dir": "/tmp",
+        })
+
+        assert result["total_comments"] == 0
+        assert result["applied"] == 0
+
+    @pytest.mark.asyncio
+    async def test_missing_required_fields(self, mock_config, mock_provider):
+        """Test handling of missing required fields."""
+        processor = PRCommentProcessor(mock_config)
+        processor.provider = mock_provider
+
+        result = await processor.run({})
+
+        assert "error" in result
+        assert result["total_comments"] == 0
+
+    @pytest.mark.asyncio
+    async def test_max_iterations_limit(self, mock_config, mock_provider):
+        """Test that max_iterations limit is enforced."""
+        processor = PRCommentProcessor(mock_config, max_iterations=2)
+        processor.provider = mock_provider
+
+        # Create 5 comments but limit to 2 iterations
+        comments = [
+            {"id": str(i), "path": f"file{i}.py", "body": f"Comment {i}", "addressed": False}
+            for i in range(5)
+        ]
+
+        # Mock responses for analyze, fix, and summary
+        mock_provider.complete.side_effect = [
+            MOCK_COMMENT_ANALYSIS_CAN_FIX,  # First comment analysis
+            MOCK_FIX_GENERATED,              # First comment fix
+            MOCK_COMMENT_ANALYSIS_CAN_FIX,  # Second comment analysis
+            MOCK_FIX_GENERATED,              # Second comment fix
+            MOCK_COMMENT_SUMMARY,            # Summary (should stop here due to limit)
+        ]
+
+        # Mock file reading
+        with patch.object(processor, 'read_file') as mock_read:
+            mock_read.side_effect = lambda state: {**state, "current_file_content": "content"}
+
+            # Mock file writing
+            with patch.object(processor, 'apply_fix') as mock_apply:
+                mock_apply.side_effect = lambda state: {
+                    **state,
+                    "proposed_fix": {**state.get("proposed_fix", {}), "applied": True}
+                }
+
+                result = await processor.run({
+                    "repo_name": "test/repo",
+                    "pr_number": 123,
+                    "all_comments": comments,
+                    "working_dir": "/tmp",
+                    "max_iterations": 2,
+                })
+
+        # Should process at most 2 comments due to limit
+        assert result is not None

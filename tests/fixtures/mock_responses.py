@@ -246,3 +246,92 @@ def get_user(user_id):
     query = f"SELECT * FROM users WHERE id = {user_id}"
     return db.execute(query)
 '''
+
+# =============================================================================
+# PRCommentProcessor Mock Responses
+# =============================================================================
+
+# Mock analysis response - can auto-fix
+MOCK_COMMENT_ANALYSIS_CAN_FIX = json.dumps({
+    "understood": True,
+    "change_type": "refactor",
+    "description": "Add type hints to function parameters",
+    "affected_lines": [1, 2],
+    "complexity": "simple",
+    "can_auto_fix": True,
+    "skip_reason": None
+})
+
+# Mock analysis response - cannot auto-fix
+MOCK_COMMENT_ANALYSIS_SKIP = json.dumps({
+    "understood": True,
+    "change_type": "refactor",
+    "description": "Major architectural change needed",
+    "affected_lines": [1, 2, 3, 4, 5],
+    "complexity": "complex",
+    "can_auto_fix": False,
+    "skip_reason": "Requires manual architectural decisions"
+})
+
+# Mock fix generation - success
+MOCK_FIX_GENERATED = json.dumps({
+    "success": True,
+    "full_file_content": "def calculate(width: float, height: float) -> float:\n    return width * height\n",
+    "changes_summary": "Added type hints to parameters and return type",
+    "lines_changed": 1
+})
+
+# Mock fix generation - failure
+MOCK_FIX_FAILED = json.dumps({
+    "success": False,
+    "skip_reason": "Unable to determine correct fix"
+})
+
+# Mock summary generation
+MOCK_COMMENT_SUMMARY = json.dumps({
+    "total_comments": 2,
+    "applied": 1,
+    "skipped": 1,
+    "failed": 0,
+    "summary": "Processed 2 comments from PR #123. Applied 1 fix and skipped 1 comment that required manual intervention.",
+    "files_modified": ["src/utils.py"],
+    "next_steps": ["Run tests", "Review applied changes", "Commit if satisfied"]
+})
+
+# Sample PR comments (simulating Greptile MCP output)
+SAMPLE_PR_COMMENTS = [
+    {
+        "id": "comment_1",
+        "body": "Please add type hints to this function",
+        "path": "src/utils.py",
+        "line": 1,
+        "addressed": False,
+        "author": "reviewer1",
+        "created_at": "2024-01-15T10:00:00Z"
+    },
+    {
+        "id": "comment_2",
+        "body": "This needs major refactoring - consider using a class here",
+        "path": "src/processor.py",
+        "line": 50,
+        "addressed": False,
+        "author": "reviewer2",
+        "created_at": "2024-01-15T11:00:00Z"
+    },
+]
+
+# Comment without file path (should be skipped)
+SAMPLE_COMMENT_NO_PATH = {
+    "id": "comment_3",
+    "body": "General comment about the PR",
+    "path": None,
+    "line": None,
+    "addressed": False,
+    "author": "reviewer3",
+    "created_at": "2024-01-15T12:00:00Z"
+}
+
+# Sample file content for testing
+SAMPLE_FILE_CONTENT = """def calculate(width, height):
+    return width * height
+"""

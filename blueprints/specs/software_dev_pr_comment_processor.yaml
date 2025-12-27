@@ -1,0 +1,378 @@
+# Software Dev PR Comment Processor Blueprint
+# Iterative workflow that processes PR comments and auto-applies fixes
+# NOTE: This blueprint uses a loop pattern with conditional edges.
+# Due to loop support limitations in code generation, this was manually implemented.
+
+blueprint:
+  version: "1.0"
+  name: "pr_comment_processor"
+  domain: "software_dev"
+  description: "Iterative PR comment processor that analyzes reviewer feedback, generates code fixes, and applies them automatically"
+  type: "langgraph"
+
+workflow:
+  state:
+    # Input fields
+    repo_name: "str"
+    pr_number: "int"
+    remote: "str"
+    default_branch: "str"
+    working_dir: "str | None"
+
+    # Comment queue
+    all_comments: "list | None"
+    pending_comments: "list"
+    current_comment: "dict | None"
+    processed_comments: "list"
+
+    # Current iteration state
+    current_file_path: "str | None"
+    current_file_content: "str | None"
+    analysis_result: "dict | None"
+    proposed_fix: "dict | None"
+
+    # Loop control
+    has_more_comments: "bool"
+    iteration_count: "int"
+    max_iterations: "int"
+
+    # Final output
+    final_result: "dict | None"
+
+  steps:
+    # Step 1: Initialize comment queue
+    - name: "fetch_comments"
+      description: "Load and filter unaddressed comments"
+      type: "state_manipulation"
+      # Implementation: Filter all_comments to unaddressed, initialize queues
+
+    # Step 2: Select next comment (loop controller)
+    - name: "select_next_comment"
+      description: "Pop next comment from queue and set as current"
+      type: "state_manipulation"
+      # Implementation: Pop from pending_comments, update loop control
+
+    # Step 3: Read file content
+    - name: "read_file"
+      description: "Read the file referenced by current comment"
+      action:
+        type: "python"
+        python:
+          function: "read_file_content"
+          inputs: ["current_file_path", "working_dir"]
+      action_output:
+        result: "current_file_content"
+
+    # Step 4: Analyze comment (LLM)
+    - name: "analyze_comment"
+      description: "Analyze what change the reviewer is requesting"
+      prompt: |
+        You are analyzing a PR review comment to understand what code change is needed.
+
+        Comment:
+        ```
+        {comment_body}
+        ```
+
+        File: {file_path}
+        Line: {line_number}
+
+        Current file content:
+        ```
+        {file_content}
+        ```
+
+        {suggestion_section}
+
+        Analyze what change the reviewer is requesting.
+
+        Return JSON:
+        {{
+          "understood": true or false,
+          "change_type": "refactor|bugfix|style|documentation|enhancement|removal",
+          "description": "Clear description of what needs to change",
+          "affected_lines": [list of line numbers or empty],
+          "complexity": "trivial|simple|moderate|complex",
+          "can_auto_fix": true or false,
+          "skip_reason": null or "reason if can't auto-fix"
+        }}
+      output_to_state: "analysis_result"
+
+    # Step 5: Generate fix (LLM)
+    - name: "generate_fix"
+      description: "Generate the code fix based on analysis"
+      prompt: |
+        You are generating a code fix based on a PR review comment.
+
+        Comment:
+        ```
+        {comment_body}
+        ```
+
+        Analysis:
+        {analysis_result}
+
+        Current file content ({file_path}):
+        ```
+        {file_content}
+        ```
+
+        Generate the complete fixed file content that addresses the reviewer's feedback.
+
+        Return JSON:
+        {{
+          "success": true or false,
+          "full_file_content": "complete new file content with the fix applied",
+          "changes_summary": "brief description of what was changed",
+          "lines_changed": number of lines modified
+        }}
+
+        IMPORTANT: The full_file_content must be the COMPLETE file content, not just the changed portion.
+      output_to_state: "proposed_fix"
+
+    # Step 6: Apply fix
+    - name: "apply_fix"
+      description: "Write the fixed content to the file"
+      action:
+        type: "python"
+        python:
+          function: "write_file_content"
+          inputs: ["current_file_path", "proposed_fix.full_file_content", "working_dir"]
+      action_output:
+        success: "proposed_fix.applied"
+
+    # Step 7: Record result
+    - name: "record_result"
+      description: "Record the processing result for this comment"
+      type: "state_manipulation"
+      # Implementation: Append result to processed_comments
+
+    # Step 8: Generate summary (LLM - exit node)
+    - name: "generate_summary"
+      description: "Generate final summary of all processed comments"
+      prompt: |
+        You are generating a summary of PR comment processing.
+
+        Processed Comments:
+        {processed_comments}
+
+        Repository: {repo_name}
+        PR Number: {pr_number}
+
+        Generate a summary suitable for a developer to review.
+
+        Return JSON:
+        {{
+          "total_comments": number,
+          "applied": number,
+          "skipped": number,
+          "failed": number,
+          "summary": "2-3 paragraph summary of all changes made",
+          "files_modified": ["list of files that were modified"],
+          "next_steps": ["recommended actions like 'Run tests', 'Review changes', 'Commit if satisfied'"]
+        }}
+      output_to_state: "final_result"
+
+  edges:
+    # Entry
+    - from: "START"
+      to: "fetch_comments"
+
+    # Linear flow to selection
+    - from: "fetch_comments"
+      to: "select_next_comment"
+
+    # Conditional after selection
+    - from: "select_next_comment"
+      to: "read_file"
+      condition: "has_file_path"
+
+    - from: "select_next_comment"
+      to: "record_result"
+      condition: "no_file_path"
+
+    - from: "select_next_comment"
+      to: "generate_summary"
+      condition: "no_current_comment"
+
+    # Linear processing within loop
+    - from: "read_file"
+      to: "analyze_comment"
+
+    - from: "analyze_comment"
+      to: "generate_fix"
+
+    - from: "generate_fix"
+      to: "apply_fix"
+
+    - from: "apply_fix"
+      to: "record_result"
+
+    # LOOP: Conditional after recording
+    - from: "record_result"
+      to: "select_next_comment"
+      condition: "has_more_comments"
+
+    - from: "record_result"
+      to: "generate_summary"
+      condition: "no_more_comments_or_max_iterations"
+
+    # Exit
+    - from: "generate_summary"
+      to: "END"
+
+agent:
+  class_name: "PRCommentProcessor"
+  description: "Iterative PR comment processor that auto-applies code fixes based on reviewer feedback"
+
+  input:
+    type: "dict"
+    fields:
+      repo_name:
+        type: "str"
+        required: true
+        description: "Repository name (e.g., 'owner/repo')"
+      pr_number:
+        type: "int"
+        required: true
+        description: "Pull request number"
+      remote:
+        type: "str"
+        required: false
+        default: "github"
+        description: "Git remote provider"
+      default_branch:
+        type: "str"
+        required: false
+        default: "main"
+        description: "Default branch name"
+      all_comments:
+        type: "list"
+        required: false
+        description: "Pre-fetched comments from Greptile MCP"
+      working_dir:
+        type: "str"
+        required: false
+        description: "Working directory for file operations"
+      max_iterations:
+        type: "int"
+        required: false
+        default: 50
+        description: "Maximum comments to process (safety limit)"
+
+  output:
+    type: "dict"
+    fields:
+      total_comments:
+        type: "int"
+        description: "Number of comments processed"
+      applied:
+        type: "int"
+        description: "Number of fixes successfully applied"
+      skipped:
+        type: "int"
+        description: "Number of comments skipped"
+      failed:
+        type: "int"
+        description: "Number of fixes that failed to apply"
+      summary:
+        type: "str"
+        description: "Human-readable summary of all changes"
+      files_modified:
+        type: "list"
+        description: "List of modified file paths"
+      next_steps:
+        type: "list"
+        description: "Recommended next actions"
+      details:
+        type: "list"
+        description: "Detailed results for each comment"
+      timestamp:
+        type: "str"
+        description: "ISO timestamp of processing"
+
+  configuration:
+    customizable:
+      - analyze_prompt
+      - generate_fix_prompt
+      - summary_prompt
+      - max_iterations
+      - working_dir
+
+tests:
+  fixtures:
+    sample_comments:
+      - id: "comment_1"
+        body: "Please add type hints to this function"
+        path: "src/utils.py"
+        line: 1
+        addressed: false
+      - id: "comment_2"
+        body: "This needs major refactoring - consider using a class"
+        path: "src/processor.py"
+        line: 50
+        addressed: false
+
+  cases:
+    - name: "Process single fixable comment"
+      input:
+        repo_name: "test/repo"
+        pr_number: 123
+        all_comments:
+          - id: "1"
+            body: "Add type hints"
+            path: "test.py"
+            line: 1
+            addressed: false
+      expected:
+        applied: 1
+        skipped: 0
+        failed: 0
+
+    - name: "Skip comment without file path"
+      input:
+        repo_name: "test/repo"
+        pr_number: 123
+        all_comments:
+          - id: "1"
+            body: "General comment"
+            path: null
+            addressed: false
+      expected:
+        applied: 0
+        skipped: 1
+        failed: 0
+
+    - name: "Handle empty comments list"
+      input:
+        repo_name: "test/repo"
+        pr_number: 123
+        all_comments: []
+      expected:
+        total_comments: 0
+        applied: 0
+
+metadata:
+  implementation_notes: |
+    This workflow uses a loop pattern with conditional edges to process comments
+    iteratively. Due to current blueprint code generation limitations with loops,
+    the implementation was created manually in:
+    src/agent_workshop/agents/software_dev/pr_comment_processor.py
+
+    The loop is implemented using LangGraph's add_conditional_edges():
+    - After record_result, check has_more_comments and iteration_count
+    - Route back to select_next_comment or to generate_summary
+
+  integration:
+    greptile_mcp:
+      tool: "list_merge_request_comments"
+      usage: |
+        Pre-fetch comments using Greptile MCP:
+        comments = await mcp__plugin_greptile_greptile__list_merge_request_comments(
+            name="owner/repo",
+            remote="github",
+            defaultBranch="main",
+            prNumber=123,
+            addressed=False
+        )
+        result = await processor.run({"all_comments": comments, ...})
