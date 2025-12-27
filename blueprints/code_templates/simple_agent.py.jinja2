@@ -1,0 +1,228 @@
+{# Simple Agent Template for agent-workshop #}
+{# Generated from: blueprints/specs/{{ blueprint.name }}.yaml #}
+"""
+{{ blueprint.description }}
+
+Blueprint: blueprints/specs/{{ blueprint.domain }}_{{ blueprint.name }}.yaml
+
+Usage:
+    from agent_workshop import Config
+    from agent_workshop.agents.{{ blueprint.domain }} import {{ agent.class_name }}
+
+    agent = {{ agent.class_name }}(Config())
+    result = await agent.run({{ agent.input.type == 'string' and 'content' or 'input_data' }})
+"""
+
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+
+from agent_workshop import Agent, Config
+
+
+class {{ agent.class_name }}(Agent):
+    """
+    {{ blueprint.description }}
+
+    This is a simple agent (single-message pattern) that:
+    1. Takes {{ agent.input.description | lower }}
+    2. Analyzes using LLM with configured prompts
+    3. Returns {{ agent.output.type }} result
+
+    Configuration Priority (highest to lowest):
+    1. Constructor parameters
+    2. YAML config file (prompts.yaml)
+    3. Environment variables
+    4. Built-in defaults
+    """
+
+    DEFAULT_SYSTEM_PROMPT = """{{ agent.prompts.system_prompt | replace('\n', '\n') }}"""
+
+    DEFAULT_CRITERIA = [
+{% for criterion in agent.validation_criteria %}
+        "{{ criterion }}",
+{% endfor %}
+    ]
+
+    DEFAULT_USER_PROMPT_TEMPLATE = """{{ agent.prompts.user_prompt_template | replace('\n', '\n') }}"""
+
+    def __init__(
+        self,
+        config: Config = None,
+        system_prompt: Optional[str] = None,
+        validation_criteria: Optional[List[str]] = None,
+        user_prompt_template: Optional[str] = None,
+        output_format: str = "{{ agent.output_format | default('json') }}",
+        config_file: Optional[str] = None,
+        preset: Optional[str] = None,
+    ):
+        """
+        Initialize the {{ agent.class_name }}.
+
+        Args:
+            config: Agent-workshop Config
+            system_prompt: Custom system prompt
+            validation_criteria: List of validation criteria
+            user_prompt_template: Template with placeholders
+            output_format: Output format (json, detailed, summary)
+            config_file: Path to YAML configuration file
+            preset: Name of built-in preset
+        """
+        super().__init__(config)
+
+        # Load configuration from file or preset
+        prompt_config = self._load_prompt_config(
+            config_file=config_file,
+            preset=preset,
+        )
+
+        # Apply configuration with priority order
+        self.system_prompt = (
+            system_prompt
+            or prompt_config.get("system_prompt")
+            or os.getenv("{{ blueprint.name | upper }}_SYSTEM_PROMPT")
+            or self.DEFAULT_SYSTEM_PROMPT
+        )
+
+        self.validation_criteria = (
+            validation_criteria
+            or prompt_config.get("validation_criteria")
+            or self._parse_env_criteria()
+            or self.DEFAULT_CRITERIA
+        )
+
+        self.user_prompt_template = (
+            user_prompt_template
+            or prompt_config.get("user_prompt_template")
+            or self.DEFAULT_USER_PROMPT_TEMPLATE
+        )
+
+        self.output_format = (
+            output_format
+            if output_format != "{{ agent.output_format | default('json') }}"
+            else prompt_config.get("output_format", "{{ agent.output_format | default('json') }}")
+        )
+
+    def _load_prompt_config(
+        self,
+        config_file: Optional[str] = None,
+        preset: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Load prompt configuration from file or preset."""
+        config: Dict[str, Any] = {}
+
+        # Load from preset first
+        if preset:
+            try:
+                from .presets import get_preset
+                config = get_preset(preset)
+            except (ImportError, ValueError):
+                pass
+
+        # Load from config file (overrides preset)
+        if config_file and Path(config_file).exists():
+            try:
+                import yaml
+                with open(config_file) as f:
+                    yaml_config = yaml.safe_load(f)
+                    config.update(yaml_config.get("{{ blueprint.name }}", {}))
+            except ImportError:
+                pass
+
+        # Try default config file location
+        elif Path("prompts.yaml").exists():
+            try:
+                import yaml
+                with open("prompts.yaml") as f:
+                    yaml_config = yaml.safe_load(f)
+                    config.update(yaml_config.get("{{ blueprint.name }}", {}))
+            except ImportError:
+                pass
+
+        return config
+
+    def _parse_env_criteria(self) -> Optional[List[str]]:
+        """Parse validation criteria from environment variable."""
+        env_criteria = os.getenv("{{ blueprint.name | upper }}_CRITERIA")
+        if env_criteria:
+            return [c.strip() for c in env_criteria.split(",")]
+        return None
+
+    async def run(self, content: {{ agent.input.type }}) -> Dict[str, Any]:
+        """
+        {{ agent.input.description }}
+
+        Args:
+            content: {{ agent.input.description }}
+
+        Returns:
+            dict with results including:
+{% for field, type in (agent.output.output_schema or {}).items() %}
+                - {{ field }}: {{ type }}
+{% endfor %}
+                - timestamp: ISO format timestamp
+        """
+        # Validate input
+        if not content or (isinstance(content, str) and not content.strip()):
+            return {
+                "error": "Empty or invalid input",
+                "timestamp": self._get_timestamp(),
+            }
+
+        # Format criteria as numbered list
+        criteria_text = "\n".join(
+            [f"{i+1}. {c}" for i, c in enumerate(self.validation_criteria)]
+        )
+
+        # Build user prompt from template
+        user_prompt = self.user_prompt_template.format(
+            criteria=criteria_text,
+            content=content,
+            output_format=self.output_format,
+        )
+
+        # Build messages with system and user prompts
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        # Run completion
+        result = await self.complete(messages, temperature={{ agent.llm_config.temperature | default(0.7) }})
+
+        # Parse response
+        parsed = self._parse_response(result)
+        parsed["timestamp"] = self._get_timestamp()
+        parsed["raw_response"] = result
+
+        return parsed
+
+    def _parse_response(self, response: str) -> Dict[str, Any]:
+        """Parse the LLM response into structured format."""
+        text = response.strip()
+
+        # Handle markdown code blocks
+        if "```json" in text:
+            start = text.find("```json") + 7
+            end = text.find("```", start)
+            if end > start:
+                text = text[start:end].strip()
+        elif "```" in text:
+            start = text.find("```") + 3
+            end = text.find("```", start)
+            if end > start:
+                text = text[start:end].strip()
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return {
+                "error": "Unable to parse response",
+                "raw": text[:500],
+            }
+
+    def _get_timestamp(self) -> str:
+        """Get current timestamp."""
+        return datetime.now().isoformat()

@@ -1,0 +1,173 @@
+# Blueprint Schema Reference
+# This documents the YAML structure for agent blueprints
+# See src/agent_workshop/blueprints/schema.py for Pydantic validation models
+
+---
+
+# Top-level structure
+blueprint:
+  version: "1.0"              # Required: Schema version
+  name: string                # Required: Agent identifier (lowercase, underscores)
+  domain: string              # Required: Domain grouping (e.g., software_dev, data_science)
+  description: string         # Required: What this agent does
+  type: simple | langgraph    # Required: Agent type
+
+# Agent specification (for simple agents)
+agent:
+  class_name: string          # Required: PascalCase class name
+
+  # Input specification
+  input:
+    type: string | dict | list  # Required: Input type
+    description: string         # Required: What the agent receives
+    validation:                 # Optional: Input validation rules
+      - string
+
+  # Output specification
+  output:
+    type: string | dict | list  # Required: Output type
+    description: string         # Optional: Output description
+    schema:                     # Optional: Output structure (for dict/list types)
+      field_name: type_hint
+
+  # Prompt configuration
+  prompts:
+    system_prompt: string       # Required: System prompt for LLM
+    user_prompt_template: string # Required: User prompt with {placeholders}
+
+  # Validation criteria
+  validation_criteria:          # Optional: List of validation criteria
+    - string
+
+  # LLM configuration
+  llm_config:                   # Optional: LLM parameters
+    temperature: float          # Default: 0.7
+    max_tokens: integer         # Default: 4096
+    model_preference: opus | sonnet | haiku  # Default: sonnet
+
+# Workflow specification (for langgraph agents only)
+workflow:
+  # State definition
+  state:
+    field_name: type_hint       # TypedDict fields
+
+  # Workflow steps
+  steps:
+    - name: string              # Required: Step identifier
+      description: string       # Optional: Step description
+      prompt: string            # Required: Prompt for this step
+      output_to_state: string   # Required: State field to write result
+
+  # Workflow edges
+  edges:
+    - from: string              # Required: Source step name
+      to: string                # Required: Target step name (or "END")
+      condition: string         # Optional: Condition for routing
+
+  entry_point: string           # Required: First step name
+
+# Dependencies (optional)
+dependencies:
+  - string                      # pip package specifiers
+
+# Test specification (optional but recommended)
+tests:
+  fixtures:
+    - name: string              # Fixture identifier
+      value: string             # Fixture value
+
+  test_cases:
+    - name: string              # Test name (test_* convention)
+      input: string             # Input (can use {{fixture_name}})
+      expected_output:          # Expected result (partial match)
+        field: value
+      should_raise: boolean     # Whether test expects exception
+
+# Documentation (optional)
+documentation:
+  usage_example: string         # Code example
+  notes:
+    - string                    # Additional notes
+
+---
+
+# Example: Simple Agent
+
+blueprint:
+  version: "1.0"
+  name: "code_reviewer"
+  domain: "software_dev"
+  description: "Reviews code for quality, security, and best practices"
+  type: "simple"
+
+agent:
+  class_name: "CodeReviewer"
+
+  input:
+    type: "string"
+    description: "Code diff or file contents to review"
+
+  output:
+    type: "dict"
+    schema:
+      approved: "bool"
+      issues: "list[dict]"
+      suggestions: "list[str]"
+      summary: "str"
+
+  prompts:
+    system_prompt: |
+      You are an expert code reviewer...
+    user_prompt_template: |
+      Review this code: {content}
+
+  validation_criteria:
+    - "No hardcoded secrets"
+    - "Proper error handling"
+
+tests:
+  fixtures:
+    - name: "clean_code"
+      value: "def hello(): return 'world'"
+  test_cases:
+    - name: "test_clean_code"
+      input: "{{clean_code}}"
+      expected_output:
+        approved: true
+
+---
+
+# Example: LangGraph Workflow
+
+blueprint:
+  version: "1.0"
+  name: "pr_pipeline"
+  domain: "software_dev"
+  description: "Multi-step PR review pipeline"
+  type: "langgraph"
+
+workflow:
+  state:
+    content: "str"
+    security_result: "str | None"
+    quality_result: "str | None"
+    final_result: "dict | None"
+
+  steps:
+    - name: "security_scan"
+      description: "Scan for security issues"
+      prompt: "Scan this code for security vulnerabilities: {content}"
+      output_to_state: "security_result"
+
+    - name: "quality_review"
+      description: "Review code quality"
+      prompt: "Review code quality based on: {security_result}"
+      output_to_state: "quality_result"
+
+  edges:
+    - from: "security_scan"
+      to: "quality_review"
+    - from: "quality_review"
+      to: "END"
+
+  entry_point: "security_scan"

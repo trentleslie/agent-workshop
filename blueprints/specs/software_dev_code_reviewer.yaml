@@ -1,0 +1,148 @@
+# Software Dev Code Reviewer Blueprint
+# Converted from: blueprints/brainstorms/software_dev_code_reviewer.md
+
+blueprint:
+  version: "1.0"
+  name: "code_reviewer"
+  domain: "software_dev"
+  description: "Reviews code snippets, diffs, or files for quality, security, and best practices. Produces structured reports with approval status, issues, and suggestions."
+  type: "simple"
+
+agent:
+  class_name: "CodeReviewer"
+
+  input:
+    type: "string"
+    description: "Code content to review (snippet, diff, or file)"
+    validation:
+      - "Input must be non-empty"
+      - "Input should be valid text (not binary)"
+
+  output:
+    type: "dict"
+    description: "Structured review report with issues and suggestions"
+    schema:
+      approved: "bool"
+      issues: "list[dict]"
+      suggestions: "list[str]"
+      summary: "str"
+
+  prompts:
+    system_prompt: |
+      You are an expert code reviewer with deep knowledge of software security, clean code principles, and industry best practices.
+
+      Your role is to review code and identify:
+      1. SECURITY issues (credentials, injection vulnerabilities, unsafe operations)
+      2. QUALITY issues (error handling, edge cases, code clarity)
+      3. STYLE issues (naming, formatting, consistency)
+      4. PERFORMANCE issues (inefficiencies, potential bottlenecks)
+
+      Prioritize issues by severity:
+      - CRITICAL: Security vulnerabilities, data exposure, crashes
+      - HIGH: Major bugs, significant quality issues
+      - MEDIUM: Code quality, maintainability concerns
+      - LOW: Style, minor improvements
+
+      Be constructive and specific. Always explain WHY something is an issue and HOW to fix it.
+
+      Output your review as valid JSON matching the expected schema.
+
+    user_prompt_template: |
+      Review the following code for quality, security, and best practices.
+
+      Validation Criteria:
+      {criteria}
+
+      Code to Review:
+      ```
+      {content}
+      ```
+
+      Provide your review as JSON with this structure:
+      {
+        "approved": boolean (false if any critical or high severity issues),
+        "issues": [
+          {
+            "severity": "critical|high|medium|low",
+            "line": number or null,
+            "category": "security|quality|style|performance",
+            "message": "description of issue",
+            "suggestion": "how to fix"
+          }
+        ],
+        "suggestions": ["general improvement suggestion"],
+        "summary": "brief overall assessment"
+      }
+
+  validation_criteria:
+    - "No hardcoded secrets - API keys, passwords, tokens must not be in code"
+    - "No SQL injection vulnerabilities - Parameterized queries required"
+    - "No command injection - User input must not be passed to shell commands"
+    - "Proper error handling - Exceptions should be caught and handled appropriately"
+    - "No obvious XSS vulnerabilities - User input must be sanitized before rendering"
+    - "Resource cleanup - Files, connections, etc. should be properly closed"
+    - "Input validation - User/external input should be validated"
+    - "Reasonable complexity - Functions should not be excessively long or complex"
+
+  llm_config:
+    temperature: 0.3
+    max_tokens: 4096
+    model_preference: "sonnet"
+
+tests:
+  fixtures:
+    - name: "clean_python"
+      value: "def add(a, b):\n    return a + b"
+
+    - name: "hardcoded_secret"
+      value: "API_KEY = \"sk-secret123\"\nrequests.get(url, headers={\"key\": API_KEY})"
+
+    - name: "sql_injection"
+      value: "query = f\"SELECT * FROM users WHERE id = {user_id}\"\ncursor.execute(query)"
+
+    - name: "no_error_handling"
+      value: "data = json.loads(response.text)\nreturn data[\"result\"]"
+
+  test_cases:
+    - name: "test_clean_code_approved"
+      input: "{{clean_python}}"
+      expected_output:
+        approved: true
+
+    - name: "test_detects_hardcoded_secret"
+      input: "{{hardcoded_secret}}"
+      expected_output:
+        approved: false
+
+    - name: "test_detects_sql_injection"
+      input: "{{sql_injection}}"
+      expected_output:
+        approved: false
+
+    - name: "test_detects_missing_error_handling"
+      input: "{{no_error_handling}}"
+      expected_output:
+        approved: true
+
+documentation:
+  usage_example: |
+    from agent_workshop import Config
+    from agent_workshop.agents.software_dev import CodeReviewer
+
+    config = Config()
+    reviewer = CodeReviewer(config)
+
+    code = '''
+    def get_user(user_id):
+        return db.query(f"SELECT * FROM users WHERE id = {user_id}")
+    '''
+
+    result = await reviewer.run(code)
+    print(f"Approved: {result['approved']}")
+    for issue in result['issues']:
+        print(f"  [{issue['severity']}] {issue['message']}")
+
+  notes:
+    - "Output is structured JSON for machine readability and CI/CD integration"
+    - "Presets available for language-specific or security-focused reviews"
+    - "This is a first-pass reviewer, not a replacement for human review"

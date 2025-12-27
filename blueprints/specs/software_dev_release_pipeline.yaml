@@ -1,0 +1,260 @@
+# Software Dev Release Pipeline Blueprint
+# Hybrid workflow: LLM for content generation, shell actions for git/gh operations
+
+blueprint:
+  version: "1.0"
+  name: "release_pipeline"
+  domain: "software_dev"
+  description: "Automated release pipeline with changelog validation, git operations, PR creation, and release notes generation"
+  type: "langgraph"
+
+workflow:
+  state:
+    # Input fields
+    version: "str"
+    release_type: "str"
+    changelog_content: "str"
+    base_branch: "str"
+
+    # LLM outputs
+    changelog_validation: "dict | None"
+    commit_message: "str | None"
+    pr_body: "str | None"
+    release_notes: "dict | None"
+    final_result: "dict | None"
+
+    # Shell action outputs
+    branch_output: "str | None"
+    branch_success: "bool | None"
+    stage_output: "str | None"
+    stage_success: "bool | None"
+    commit_output: "str | None"
+    commit_success: "bool | None"
+    push_output: "str | None"
+    push_success: "bool | None"
+    pr_output: "str | None"
+    pr_success: "bool | None"
+
+  steps:
+    # Step 1: LLM validates changelog and generates commit message
+    - name: "validate_changelog"
+      description: "Validate changelog and generate commit message"
+      prompt: |
+        You are a release manager validating a changelog for version {version}.
+
+        Release type: {release_type}
+
+        Changelog content:
+        ```
+        {changelog_content}
+        ```
+
+        Validate the changelog and generate a commit message.
+
+        Validation criteria:
+        1. Has version header matching {version}
+        2. Has categorized changes (Added, Changed, Fixed, Removed, etc.)
+        3. Each change has clear description
+        4. Proper markdown formatting
+
+        Return JSON:
+        {{
+          "valid": true/false,
+          "issues": ["list of issues if any"],
+          "commit_message": "feat(release): v{version} - brief summary",
+          "pr_body": "## Release v{version}\\n\\n[formatted PR description with changelog summary]"
+        }}
+      output_to_state: "changelog_validation"
+
+    # Step 2: Create release branch
+    - name: "create_branch"
+      description: "Create release branch"
+      action:
+        type: "shell"
+        shell:
+          command: "git checkout -b release/v{version}"
+          timeout_seconds: 30
+          allowed_exit_codes: [0]
+      action_output:
+        stdout: "branch_output"
+        success: "branch_success"
+
+    # Step 3: Stage all changes
+    - name: "stage_changes"
+      description: "Stage all changes for commit"
+      action:
+        type: "shell"
+        shell:
+          command: "git add -A"
+          timeout_seconds: 30
+          allowed_exit_codes: [0]
+      action_output:
+        stdout: "stage_output"
+        success: "stage_success"
+
+    # Step 4: Create commit
+    - name: "commit_changes"
+      description: "Create release commit"
+      action:
+        type: "shell"
+        shell:
+          command: "git commit -m '{commit_message}'"
+          timeout_seconds: 60
+          allowed_exit_codes: [0]
+      action_output:
+        stdout: "commit_output"
+        success: "commit_success"
+
+    # Step 5: Push branch to remote
+    - name: "push_branch"
+      description: "Push release branch to remote"
+      action:
+        type: "shell"
+        shell:
+          command: "git push -u origin release/v{version}"
+          timeout_seconds: 120
+          allowed_exit_codes: [0]
+      action_output:
+        stdout: "push_output"
+        success: "push_success"
+
+    # Step 6: Create pull request
+    - name: "create_pr"
+      description: "Create pull request via GitHub CLI"
+      action:
+        type: "shell"
+        shell:
+          command: "gh pr create --base '{base_branch}' --title 'Release v{version}' --body '{pr_body}'"
+          timeout_seconds: 60
+          allowed_exit_codes: [0]
+      action_output:
+        stdout: "pr_output"
+        success: "pr_success"
+
+    # Step 7: LLM generates release notes
+    - name: "generate_release_notes"
+      description: "Generate formatted release notes"
+      prompt: |
+        Generate release notes for version {version} based on this changelog:
+
+        ```
+        {changelog_content}
+        ```
+
+        PR was created: {pr_success}
+        PR URL: {pr_output}
+
+        Create professional release notes suitable for GitHub Releases.
+
+        Return JSON:
+        {{
+          "title": "v{version}",
+          "body": "Formatted markdown for GitHub Release",
+          "highlights": ["key highlight 1", "key highlight 2"],
+          "breaking_changes": ["any breaking changes"],
+          "pr_url": "{pr_output}"
+        }}
+      output_to_state: "release_notes"
+
+    # Step 8: Generate final summary
+    - name: "generate_summary"
+      description: "Generate final release summary"
+      prompt: |
+        Summarize the release pipeline execution for version {version}.
+
+        Steps completed:
+        - Branch creation: {branch_success}
+        - Staging: {stage_success}
+        - Commit: {commit_success} ({commit_output})
+        - Push: {push_success}
+        - PR creation: {pr_success}
+
+        PR URL: {pr_output}
+        Release notes: {release_notes}
+
+        Return JSON:
+        {{
+          "success": true/false (all steps passed),
+          "version": "{version}",
+          "pr_url": "extracted PR URL",
+          "next_steps": [
+            "Review and merge the PR",
+            "Create GitHub Release with tag v{version}",
+            "Run: uv build && twine upload dist/*"
+          ],
+          "summary": "Human-readable summary paragraph"
+        }}
+      output_to_state: "final_result"
+
+  edges:
+    - from: "validate_changelog"
+      to: "create_branch"
+    - from: "create_branch"
+      to: "stage_changes"
+    - from: "stage_changes"
+      to: "commit_changes"
+    - from: "commit_changes"
+      to: "push_branch"
+    - from: "push_branch"
+      to: "create_pr"
+    - from: "create_pr"
+      to: "generate_release_notes"
+    - from: "generate_release_notes"
+      to: "generate_summary"
+    - from: "generate_summary"
+      to: "END"
+
+  entry_point: "validate_changelog"
+
+dependencies:
+  - "agent_workshop"
+
+tests:
+  fixtures:
+    - name: "valid_changelog"
+      value: |
+        ## [0.3.0] - 2024-01-15
+
+        ### Added
+        - Blueprint system for agent definitions
+        - Action steps for hybrid workflows
+        - Release pipeline agent
+
+        ### Changed
+        - Updated code generator for action support
+
+        ### Fixed
+        - Type mapping in code generator
+
+  test_cases:
+    - name: "test_valid_release"
+      input: "{{valid_changelog}}"
+      expected_output:
+        success: true
+
+documentation:
+  usage_example: |
+    from agent_workshop import Config
+    from agent_workshop.agents.software_dev import ReleasePipeline
+
+    config = Config()
+    pipeline = ReleasePipeline(config)
+
+    result = await pipeline.run({
+        "version": "0.3.0",
+        "release_type": "minor",
+        "changelog_content": changelog_text,
+        "base_branch": "main",
+    })
+
+    if result["success"]:
+        print(f"Release PR created: {result['pr_url']}")
+        print(f"Next steps: {result['next_steps']}")
+    else:
+        print(f"Release failed: {result['summary']}")
+
+  notes:
+    - "Requires authenticated GitHub CLI (gh auth login)"
+    - "Creates branch and PR rather than pushing directly to main"
+    - "LLM generates commit messages, PR body, and release notes"
+    - "Shell actions execute git and gh commands"

@@ -1,0 +1,10 @@
+# Gitleaks false positives - mock/example API keys in test fixtures and documentation
+
+# Mock API key in code reviewer brainstorm documentation (example of bad code to detect)
+blueprints/brainstorms/software_dev_code_reviewer.md:generic-api-key:47
+
+# Mock API key in notebook validator test fixture (example of security issue to detect)
+blueprints/specs/data_science_notebook_validator.yaml:generic-api-key:131
+
+# Mock API key in test fixtures (intentional test data)
+tests/fixtures/mock_responses.py:generic-api-key:218

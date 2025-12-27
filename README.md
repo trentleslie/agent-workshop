@@ -39,6 +39,12 @@ Batteries-included framework for building automation-focused AI agents with full
 - Built-in presets for common use cases
 - 5-minute setup to first validation
 
+🏗️ **Blueprint System (NEW)**
+- Define agents as YAML specifications
+- Generate agent code from blueprints
+- AgentBuilder meta-agent for automation
+- Validated schemas with Pydantic
+
 ## Quick Start
 
 ### Option 1: Pre-built Agents (Fastest - 5 minutes)
@@ -186,6 +192,54 @@ result = await pipeline.run({"content": report})
 
 ---
 
+### Option 3: Blueprint-Generated Agents (NEW)
+
+**Perfect for:** Standardized agent definitions, team collaboration, automated agent creation
+
+```bash
+# Install with blueprint support
+uv add 'agent-workshop[blueprints]'
+```
+
+```python
+from agent_workshop.blueprints import generate_agent_from_blueprint
+from agent_workshop import Config
+
+# Generate agent code from a blueprint
+result = await generate_agent_from_blueprint(
+    "blueprints/specs/my_agent.yaml",
+    output_path="src/agents/my_agent.py",
+)
+
+if result["success"]:
+    print(f"Generated: {result['written_path']}")
+```
+
+**Blueprint structure:**
+```yaml
+blueprint:
+  name: "my_validator"
+  domain: "my_domain"
+  type: "simple"  # or "langgraph"
+
+agent:
+  class_name: "MyValidator"
+  input:
+    type: "string"
+  output:
+    type: "dict"
+  prompts:
+    system_prompt: "You are an expert validator..."
+    user_prompt_template: "Validate: {content}"
+  validation_criteria:
+    - "Check for quality"
+    - "Verify completeness"
+```
+
+See [blueprints/README.md](https://github.com/trentleslie/agent-workshop/blob/main/blueprints/README.md) for complete documentation.
+
+---
+
 ## Pre-built Agents Reference
 
 ### DeliverableValidator
@@ -236,6 +290,41 @@ pipeline = ValidationPipeline(
 )
 
 result = await pipeline.run({"content": document_content})
+```
+
+### CodeReviewer (Software Dev)
+
+Reviews code for security, quality, and best practices.
+
+**Usage:**
+```python
+from agent_workshop.agents.software_dev import CodeReviewer, get_preset
+from agent_workshop import Config
+
+# Use security-focused preset
+preset = get_preset("security_focused")
+reviewer = CodeReviewer(Config(), **preset)
+
+result = await reviewer.run(code_content)
+# Returns: {approved: bool, issues: list, suggestions: list, summary: str}
+```
+
+**Available presets:** `general`, `security_focused`, `python_specific`, `javascript_specific`, `quick_scan`
+
+### NotebookValidator (Data Science)
+
+Validates Jupyter notebooks for reproducibility, documentation, and quality.
+
+**Usage:**
+```python
+from agent_workshop.agents.data_science import NotebookValidator
+from agent_workshop import Config
+
+validator = NotebookValidator(Config())
+
+# Pass notebook JSON or cell content
+result = await validator.run(notebook_json)
+# Returns: {valid: bool, score: int, issues: list, suggestions: list, summary: str}
 ```
 
 ---
@@ -538,6 +627,12 @@ User's Project (your own repo)
 agent-workshop Package (from PyPI)
 ├── Agent (simple agents)
 ├── LangGraphAgent (workflows)
+├── Blueprints                    ← AgentBuilder, code generation
+│   ├── Schema validation
+│   └── Code generation
+├── Domain Agents
+│   ├── software_dev (CodeReviewer, PRPipeline)
+│   └── data_science (NotebookValidator)
 ├── Providers (Claude SDK, Anthropic API)
 └── Langfuse Integration
 

@@ -24,21 +24,37 @@ Provider selection logic is in `src/agent_workshop/config.py` via `get_provider_
    - `src/agent_workshop/workflows/langgraph_agent.py`: Multi-step workflows via LangGraph (15% use case)
    - Both maintain single-message pattern externally; LangGraph has internal multi-step orchestration
 
-2. **Configuration System** (`src/agent_workshop/config.py`)
+2. **Pre-built Agents** (`src/agent_workshop/agents/`)
+   - `validators/deliverable.py`: Production-ready DeliverableValidator
+   - `validators/presets.py`: Industry presets (financial_report, research_paper, etc.)
+   - `pipelines/validation.py`: Multi-step ValidationPipeline using LangGraph
+   - Customizable via YAML config (`prompts.yaml`) or constructor args
+
+3. **Configuration System** (`src/agent_workshop/config.py`)
    - Pydantic Settings-based with environment variable support
    - Environment-specific files: `.env.development`, `.env.production`, `.env.staging`
    - Cached via `@lru_cache` in `get_config()`
 
-3. **Provider Abstraction** (`src/agent_workshop/providers/`)
+4. **Provider Abstraction** (`src/agent_workshop/providers/`)
    - `base.py`: LLMProvider abstract base class
    - `claude_agent_sdk.py`: Claude Agent SDK implementation (development)
    - `anthropic_api.py`: Anthropic API implementation (production)
    - All providers support Langfuse tracing integration
 
-4. **Observability** (`src/agent_workshop/utils/langfuse_helpers.py`)
+5. **Observability** (`src/agent_workshop/utils/langfuse_helpers.py`)
    - Automatic Langfuse tracing via `@observe` decorator
    - Token counting and cost estimation built-in
    - All agent completions are automatically traced
+
+6. **Blueprint System** (`src/agent_workshop/blueprints/`)
+   - `schema.py`: Pydantic models for blueprint validation
+   - `validators.py`: Blueprint and code validation utilities
+   - `code_generator.py`: Jinja2 and inline code generation
+   - `agent_builder.py`: AgentBuilder meta-agent (LangGraph workflow)
+
+7. **Domain Agents** (`src/agent_workshop/agents/`)
+   - `software_dev/`: CodeReviewer, PRPipeline, presets for code review
+   - `data_science/`: NotebookValidator (generated from blueprint)
 
 ## Development Commands
 
@@ -54,7 +70,10 @@ uv sync --all-extras
 uv run pytest
 
 # Run specific test file
-uv run pytest tests/test_specific.py
+uv run pytest tests/test_langfuse_integration.py
+
+# Run tests matching a pattern
+uv run pytest -k "test_langfuse"
 
 # Run with verbose output
 uv run pytest -v
@@ -67,6 +86,9 @@ uv run ruff format
 
 # Lint code
 uv run ruff check
+
+# Lint and auto-fix
+uv run ruff check --fix
 
 # Type checking
 uv run mypy src/
@@ -113,6 +135,42 @@ class MyWorkflow(LangGraphAgent):
         return {"step1_result": result, **state}
 ```
 
+### Using Blueprints
+
+**Generate agent from blueprint:**
+```python
+from agent_workshop.blueprints import generate_agent_from_blueprint
+
+result = await generate_agent_from_blueprint(
+    "blueprints/specs/my_agent.yaml",
+    output_path="src/agents/my_agent.py",
+)
+
+if result["success"]:
+    print(f"Generated: {result['written_path']}")
+```
+
+**Blueprint YAML structure:**
+```yaml
+blueprint:
+  name: "my_agent"
+  domain: "my_domain"
+  type: "simple"  # or "langgraph"
+
+agent:
+  class_name: "MyAgent"
+  input:
+    type: "string"
+  output:
+    type: "dict"
+  prompts:
+    system_prompt: "..."
+    user_prompt_template: "..."
+  validation_criteria:
+    - "Criterion 1"
+    - "Criterion 2"
+```
+
 ### Provider Management
 
 - **Never instantiate providers directly** in agent subclasses; use `self.provider` from base class
@@ -152,11 +210,16 @@ Core dependencies (see `pyproject.toml`):
 - `anthropic>=0.40.0`: Anthropic API client
 - `langgraph>=0.2.0`: Workflow orchestration
 - `tiktoken>=0.7.0`: Token counting
-- `pydantic>=2.0.0`: Configuration and validation
+- `pydantic>=2.0.0`, `pydantic-settings>=2.0.0`: Configuration and validation
 - `python-dotenv>=1.0.0`: Environment management
 
-Optional:
-- `claude-agent-sdk>=0.1.0`: Claude Agent SDK for development (install with `[claude-agent]` extra)
+Optional extras:
+- `[claude-agent]`: Claude Agent SDK for development
+- `[validators]`: Pre-built validators with YAML config support
+- `[pipelines]`: Pre-built LangGraph pipelines
+- `[agents]`: All pre-built agents (validators + pipelines)
+- `[blueprints]`: Blueprint system with code generation (includes Jinja2)
+- `[dev]`: Development tools (pytest, ruff, mypy)
 
 Dev tools: `pytest`, `pytest-asyncio`, `ruff`, `mypy`
 
@@ -172,6 +235,10 @@ Key environment variables (see `.env.example` for complete list):
 ## File Structure Note
 
 - `src/agent_workshop/`: Framework source code
-- `examples/`: Reference implementations (simple_validator, langgraph_pipeline)
-- `tests/`: Test suite (currently minimal)
+- `src/agent_workshop/blueprints/`: Blueprint system (schema, validation, code generation)
+- `src/agent_workshop/agents/software_dev/`: Code review agents (CodeReviewer, PRPipeline)
+- `src/agent_workshop/agents/data_science/`: Data science agents (NotebookValidator)
+- `blueprints/`: Blueprint definitions (specs, templates, brainstorms)
+- `examples/`: Reference implementations (simple_validator, langgraph_pipeline, blueprint_usage)
+- `tests/`: Test suite with fixtures
 - `docs/`: Documentation (currently empty but referenced in README)

@@ -1,0 +1,192 @@
+# Data Science Notebook Validator Blueprint
+# Converted from: blueprints/brainstorms/data_science_notebook_validator.md
+
+blueprint:
+  version: "1.0"
+  name: "notebook_validator"
+  domain: "data_science"
+  description: "Validates Jupyter notebooks for reproducibility, documentation quality, and data science best practices. Returns structured reports with quality scores and improvement suggestions."
+  type: "simple"
+
+agent:
+  class_name: "NotebookValidator"
+
+  input:
+    type: "string"
+    description: "Jupyter notebook content (JSON or cell text)"
+    validation:
+      - "Input must be non-empty"
+      - "Should contain notebook cells or valid notebook JSON"
+
+  output:
+    type: "dict"
+    description: "Validation report with score, issues, and suggestions"
+    schema:
+      valid: "bool"
+      score: "int"
+      issues: "list[dict]"
+      suggestions: "list[str]"
+      summary: "str"
+
+  prompts:
+    system_prompt: |
+      You are an expert data scientist and notebook reviewer specializing in reproducibility, documentation quality, and best practices.
+
+      Your role is to review Jupyter notebooks and identify issues in these categories:
+
+      1. REPRODUCIBILITY - Can others run this notebook?
+         - Non-linear cell execution (cells run out of order)
+         - Hardcoded absolute paths
+         - Missing dependency imports
+         - Environment-specific code
+         - Random seeds not set
+
+      2. DOCUMENTATION - Is the notebook well-documented?
+         - Missing or inadequate markdown cells
+         - No clear narrative structure
+         - Undocumented data transformations
+         - Missing section headers
+
+      3. SECURITY - Are there security concerns?
+         - Hardcoded credentials or API keys
+         - Sensitive data exposed in outputs
+         - Insecure network calls
+
+      4. QUALITY - Is the code quality good?
+         - Long cells that should be split
+         - Unused imports
+         - Poor variable naming
+         - No error handling
+
+      Prioritize issues by severity:
+      - CRITICAL: Security vulnerabilities, completely broken reproducibility
+      - HIGH: Major reproducibility or documentation gaps
+      - MEDIUM: Quality issues, minor documentation gaps
+      - LOW: Style suggestions, nice-to-haves
+
+      Output your review as valid JSON matching the expected schema.
+
+    user_prompt_template: |
+      Review the following Jupyter notebook content for quality, reproducibility, and best practices.
+
+      Validation Criteria:
+      {criteria}
+
+      Notebook Content:
+      ```
+      {content}
+      ```
+
+      Provide your review as JSON with this structure:
+      {{
+        "valid": boolean (true if score >= 70 and no critical issues),
+        "score": integer 0-100,
+        "issues": [
+          {{
+            "severity": "critical|high|medium|low",
+            "category": "reproducibility|documentation|security|quality",
+            "cell_index": number or null,
+            "message": "description"
+          }}
+        ],
+        "suggestions": ["improvement suggestion"],
+        "summary": "brief assessment"
+      }}
+
+  validation_criteria:
+    - "No hardcoded credentials or API keys - Security risk"
+    - "No absolute file paths - Breaks reproducibility on other machines"
+    - "Cells should appear in executable order - Prevents confusion and errors"
+    - "Markdown cells explain code sections - Documentation for understanding"
+    - "Imports are declared at the top or documented - Dependency clarity"
+    - "No large outputs stored in cells - Bloats notebook size"
+    - "Random seeds set for reproducible results - ML/statistics reproducibility"
+    - "Clear section structure with headers - Navigation and organization"
+
+  llm_config:
+    temperature: 0.3
+    max_tokens: 2000
+
+dependencies:
+  - "agent_workshop"
+
+tests:
+  fixtures:
+    - name: "clean_notebook"
+      value: |
+        {
+          "cells": [
+            {"cell_type": "markdown", "source": ["# Data Analysis\n", "This notebook demonstrates data loading and analysis."]},
+            {"cell_type": "code", "source": ["import pandas as pd\n", "import numpy as np\n", "np.random.seed(42)"]},
+            {"cell_type": "markdown", "source": ["## Load Data"]},
+            {"cell_type": "code", "source": ["df = pd.read_csv('data/dataset.csv')"]},
+            {"cell_type": "markdown", "source": ["## Analysis"]},
+            {"cell_type": "code", "source": ["df.describe()"]}
+          ]
+        }
+    - name: "notebook_with_secret"
+      value: |
+        {
+          "cells": [
+            {"cell_type": "code", "source": ["API_KEY = 'sk-1234567890abcdef'\n", "import requests"]},
+            {"cell_type": "code", "source": ["resp = requests.get('https://api.example.com', headers={'Authorization': API_KEY})"]}
+          ]
+        }
+    - name: "notebook_with_hardcoded_path"
+      value: |
+        {
+          "cells": [
+            {"cell_type": "code", "source": ["df = pd.read_csv('/home/username/projects/data/file.csv')"]}
+          ]
+        }
+    - name: "undocumented_notebook"
+      value: |
+        {
+          "cells": [
+            {"cell_type": "code", "source": ["import pandas as pd"]},
+            {"cell_type": "code", "source": ["df = pd.read_csv('data.csv')"]},
+            {"cell_type": "code", "source": ["df.head()"]},
+            {"cell_type": "code", "source": ["df.describe()"]}
+          ]
+        }
+
+  test_cases:
+    - name: "test_clean_notebook_passes"
+      input: "{{clean_notebook}}"
+      expected:
+        valid: true
+    - name: "test_secret_detected"
+      input: "{{notebook_with_secret}}"
+      expected:
+        valid: false
+    - name: "test_hardcoded_path_detected"
+      input: "{{notebook_with_hardcoded_path}}"
+      expected:
+        valid: false
+    - name: "test_undocumented_notebook_flagged"
+      input: "{{undocumented_notebook}}"
+      expected:
+        valid: false
+
+documentation:
+  usage_example: |
+    from agent_workshop import Config
+    from agent_workshop.agents.data_science import NotebookValidator
+
+    validator = NotebookValidator(Config())
+
+    # Validate a notebook
+    notebook_json = open("analysis.ipynb").read()
+    result = await validator.run(notebook_json)
+
+    if result["valid"]:
+        print(f"Notebook passed with score: {result['score']}")
+    else:
+        print(f"Issues found: {len(result['issues'])}")
+        for issue in result["issues"]:
+            print(f"  [{issue['severity']}] {issue['message']}")
+
+  notes:
+    - "Accepts both raw notebook JSON and cell content strings"
+    - "Score >= 70 with no critical issues means valid"
+    - "Use 'strict' preset for production notebook validation"
