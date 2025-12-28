@@ -57,7 +57,7 @@ except ImportError:
     # If not installed, environment variables must be set externally
     pass
 
-__version__ = "0.1.1"
+__version__ = "0.3.0"
 
 # Core classes
 from .agent import Agent
