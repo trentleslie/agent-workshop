@@ -10,12 +10,12 @@ Verifies that:
 
 import os
 import warnings
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
 from agent_workshop import Config, Agent
-from agent_workshop.utils import setup_langfuse, test_langfuse_connection
+from agent_workshop.utils import setup_langfuse
 
 
 class TestEnvironmentLoading:
@@ -33,7 +33,6 @@ class TestEnvironmentLoading:
         # Import should not raise any warnings about missing keys
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            from agent_workshop import Agent
 
             # Should not have any Langfuse authentication warnings
             langfuse_warnings = [

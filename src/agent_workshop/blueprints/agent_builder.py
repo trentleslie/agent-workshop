@@ -41,7 +41,6 @@ from .validators import (
     load_blueprint,
     validate_blueprint,
     validate_generated_code,
-    validate_python_syntax,
     ValidationResult,
     ValidationError,
 )
@@ -306,7 +305,7 @@ class AgentBuilder(LangGraphAgent):
                 "code": code,
             }
 
-        except FileNotFoundError as e:
+        except FileNotFoundError:
             # Template not found - fall back to inline
             try:
                 code = self.inline_generator.generate(blueprint)

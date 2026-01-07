@@ -86,7 +86,7 @@ async def example_generate_code_inline(blueprint_path: str):
         code = generator.generate(blueprint)
 
         print(f"Generated {len(code)} characters of Python code")
-        print(f"\nFirst 500 characters:")
+        print("\nFirst 500 characters:")
         print("-" * 40)
         print(code[:500])
         print("...")
@@ -113,7 +113,7 @@ async def example_generate_code_jinja2(blueprint_path: str):
         code = generator.generate(blueprint)
 
         print(f"Generated {len(code)} characters of Python code")
-        print(f"\nFirst 500 characters:")
+        print("\nFirst 500 characters:")
         print("-" * 40)
         print(code[:500])
         print("...")
@@ -149,11 +149,11 @@ async def example_agent_builder(blueprint_path: str, output_path: str | None = N
             input_data["output_path"] = output_path
             input_data["overwrite"] = True
 
-        print(f"Running AgentBuilder pipeline...")
+        print("Running AgentBuilder pipeline...")
         result = await builder.run(input_data)
 
         # Report results
-        print(f"\nResult:")
+        print("\nResult:")
         print(f"  Success: {result['success']}")
 
         if result["error"]:

@@ -5,13 +5,11 @@ This module handles rendering agent code from blueprint specifications
 using the templates in blueprints/code_templates/.
 """
 
-import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Optional
 
 from .schema import AgentBlueprint
-from .validators import validate_python_syntax, ValidationResult
 
 
 # Default template directory (relative to repo root)

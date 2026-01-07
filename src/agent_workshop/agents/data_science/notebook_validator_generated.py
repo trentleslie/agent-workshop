@@ -6,9 +6,7 @@ Generated at: 2025-12-27T12:58:08.486296
 """
 
 import json
-import os
 from datetime import datetime
-from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from agent_workshop import Agent, Config

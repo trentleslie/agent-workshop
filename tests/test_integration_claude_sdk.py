@@ -25,7 +25,6 @@ from agent_workshop.agents.software_dev import CodeReviewer, PRPipeline, get_pre
 from fixtures.mock_responses import (
     SAMPLE_CLEAN_CODE,
     SAMPLE_CODE_WITH_SECRET,
-    SAMPLE_CODE_WITH_ISSUES,
 )
 
 

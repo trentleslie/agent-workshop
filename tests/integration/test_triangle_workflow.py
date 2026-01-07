@@ -15,9 +15,7 @@ Manual testing validated this flow on Issue #18 → PR #19 → Merge (commit 016
 """
 
 import json
-import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,8 +28,6 @@ from agent_workshop.agents.software_dev import (
     make_thread_id,
 )
 from agent_workshop.agents.software_dev.types import (
-    IssueToPRState,
-    TriangleState,
     CommentProcessorResults,
 )
 
