@@ -6,6 +6,7 @@ This module provides pre-built agents for software development tasks:
 - PRPipeline: Multi-step PR review workflow (LangGraph)
 - ReleasePipeline: Automated release workflow with git/PR operations (LangGraph)
 - PRCommentProcessor: Iterative PR comment processor with auto-fix (LangGraph)
+- IssueToPR: Issue-to-PR workflow with human checkpoint (LangGraph + checkpointing)
 
 Usage:
     # Simple code review
@@ -48,17 +49,23 @@ Usage:
 """
 
 from .code_reviewer import CodeReviewer
-from .pr_pipeline import PRPipeline
-from .release_pipeline import ReleasePipeline
+from .issue_to_pr import IssueToPR, make_thread_id
 from .pr_comment_processor import PRCommentProcessor
-from .presets import get_preset, list_presets, PRESETS
+from .pr_pipeline import PRPipeline
+from .presets import PRESETS, get_preset, list_presets
+from .release_pipeline import ReleasePipeline
+from .triangle_orchestrator import CommentProcessorConfig, TriangleOrchestrator
 
 __all__ = [
     "CodeReviewer",
-    "PRPipeline",
-    "ReleasePipeline",
+    "CommentProcessorConfig",
+    "IssueToPR",
     "PRCommentProcessor",
+    "PRPipeline",
+    "PRESETS",
+    "ReleasePipeline",
+    "TriangleOrchestrator",
     "get_preset",
     "list_presets",
-    "PRESETS",
+    "make_thread_id",
 ]

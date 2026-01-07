@@ -27,7 +27,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import aiosqlite
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.base import CheckpointTuple
@@ -74,12 +76,14 @@ def get_checkpointer(
 ) -> SqliteSaver:
     """Factory function returning SqliteSaver configured for triangle workflows.
 
+    Note: For async workflows, use get_async_checkpointer() instead.
+
     Args:
         db_path: Explicit path to database file. If None, uses default location.
         base_dir: Base directory for state storage (ignored if db_path provided).
 
     Returns:
-        Configured SqliteSaver instance.
+        Configured SqliteSaver instance ready for use (not a context manager).
 
     Example:
         checkpointer = get_checkpointer()
@@ -92,7 +96,42 @@ def get_checkpointer(
         # Ensure parent directory exists
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    return SqliteSaver.from_conn_string(str(db_path))
+    # Create connection directly for persistent use
+    # (SqliteSaver.from_conn_string returns a context manager which isn't suitable
+    # for workflows that need a persistent checkpointer)
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    return SqliteSaver(conn)
+
+
+def get_async_checkpointer_context(
+    db_path: str | Path | None = None,
+    base_dir: str | Path | None = None,
+):
+    """Get AsyncSqliteSaver context manager for async triangle workflows.
+
+    This returns a context manager that must be used with `async with`.
+
+    Args:
+        db_path: Explicit path to database file. If None, uses default location.
+        base_dir: Base directory for state storage (ignored if db_path provided).
+
+    Returns:
+        AsyncSqliteSaver context manager.
+
+    Example:
+        async with get_async_checkpointer_context() as checkpointer:
+            graph = workflow.compile(checkpointer=checkpointer)
+            result = await graph.ainvoke(...)
+    """
+    if db_path is None:
+        db_path = get_db_path(base_dir)
+    else:
+        db_path = Path(db_path)
+        # Ensure parent directory exists
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Return the async context manager from_conn_string
+    return AsyncSqliteSaver.from_conn_string(str(db_path))
 
 
 def make_thread_id(issue_number: int | None = None, epic_id: str | None = None) -> str:

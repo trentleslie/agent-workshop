@@ -31,7 +31,6 @@ Usage:
 import json
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import TypedDict, Dict, Any, List
 
 from langgraph.graph import StateGraph, END
@@ -432,8 +431,17 @@ Return JSON:
         )
 
         messages = [{"role": "user", "content": prompt}]
-        result = await self.provider.complete(messages, temperature=0.3)
-        parsed = self._parse_json_response(result)
+        try:
+            result = await self.provider.complete(messages, temperature=0.3)
+            parsed = self._parse_json_response(result)
+        except Exception as e:
+            # Gracefully handle LLM failures
+            parsed = {
+                "understood": False,
+                "can_auto_fix": False,
+                "skip_reason": f"LLM analysis failed: {str(e)}",
+                "error": str(e),
+            }
 
         return {
             **state,
@@ -476,8 +484,16 @@ Return JSON:
         )
 
         messages = [{"role": "user", "content": prompt}]
-        result = await self.provider.complete(messages, temperature=0.3)
-        parsed = self._parse_json_response(result)
+        try:
+            result = await self.provider.complete(messages, temperature=0.3)
+            parsed = self._parse_json_response(result)
+        except Exception as e:
+            # Gracefully handle LLM failures
+            parsed = {
+                "success": False,
+                "skip_reason": f"LLM fix generation failed: {str(e)}",
+                "error": str(e),
+            }
 
         return {
             **state,
@@ -635,8 +651,15 @@ Return JSON:
         )
 
         messages = [{"role": "user", "content": prompt}]
-        result = await self.provider.complete(messages, temperature=0.3)
-        parsed = self._parse_json_response(result)
+        try:
+            result = await self.provider.complete(messages, temperature=0.3)
+            parsed = self._parse_json_response(result)
+        except Exception as e:
+            # Gracefully handle LLM failures - generate summary without LLM
+            parsed = {
+                "summary": f"Processing complete with {applied} applied, {skipped} skipped, {failed} failed. (Summary generation failed: {str(e)})",
+                "next_steps": ["Review changes manually", "Run tests", "Commit if satisfied"],
+            }
 
         # Collect modified files
         files_modified = list(set(
@@ -763,4 +786,19 @@ Return JSON:
         result = await super().run(state)
 
         # Return final_result or the full state
+        # Guard against None result from graph execution
+        if result is None:
+            return {
+                "total_comments": len(input.get("all_comments", [])),
+                "applied": 0,
+                "skipped": 0,
+                "failed": len(input.get("all_comments", [])),
+                "summary": "Workflow execution failed - no result returned",
+                "files_modified": [],
+                "next_steps": ["Check logs for errors", "Retry the workflow"],
+                "details": [],
+                "timestamp": datetime.now().isoformat(),
+                "error": "Workflow returned no result",
+            }
+
         return result.get("final_result", result)

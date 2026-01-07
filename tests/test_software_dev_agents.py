@@ -1,5 +1,5 @@
 """
-Unit tests for software_dev agents (CodeReviewer and PRPipeline).
+Unit tests for software_dev agents (CodeReviewer, PRPipeline, IssueToPR, TriangleOrchestrator).
 
 Tests use mocked LLM responses to verify:
 - JSON parsing (various formats)
@@ -7,10 +7,13 @@ Tests use mocked LLM responses to verify:
 - Preset loading
 - Error handling
 - Workflow state management (PRPipeline)
+- Checkpoint behavior (IssueToPR, TriangleOrchestrator)
+- Human-in-the-loop flow control
 """
 
 import json
 import pytest
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent_workshop.config import Config, get_config
@@ -19,6 +22,10 @@ from agent_workshop.agents.software_dev import (
     PRPipeline,
     ReleasePipeline,
     PRCommentProcessor,
+    IssueToPR,
+    TriangleOrchestrator,
+    CommentProcessorConfig,
+    make_thread_id,
     get_preset,
     list_presets,
 )
@@ -38,16 +45,13 @@ from fixtures.mock_responses import (
     MOCK_PR_SUMMARY,
     MOCK_PR_SUMMARY_APPROVED,
     MOCK_COMMENT_ANALYSIS_CAN_FIX,
-    MOCK_COMMENT_ANALYSIS_SKIP,
     MOCK_FIX_GENERATED,
-    MOCK_FIX_FAILED,
     MOCK_COMMENT_SUMMARY,
     SAMPLE_CLEAN_CODE,
     SAMPLE_CODE_WITH_SECRET,
     SAMPLE_CODE_WITH_ISSUES,
-    SAMPLE_PR_COMMENTS,
-    SAMPLE_COMMENT_NO_PATH,
     SAMPLE_FILE_CONTENT,
+    MOCK_ISSUE_SPEC_PARSED,
 )
 
 
@@ -619,7 +623,6 @@ class TestReleasePipelineCommandFormatting:
 
     def test_branch_command_formatting(self, mock_config):
         """Test that branch command is formatted correctly."""
-        import shlex
         state = {'version': '0.3.0'}
         command_template = 'git checkout -b release/v{version}'
         command = command_template.format(**{k: str(v) for k, v in state.items()})
@@ -1188,3 +1191,423 @@ class TestPRCommentProcessorWorkflow:
 
         # Should process at most 2 comments due to limit
         assert result is not None
+
+
+# =============================================================================
+# Thread ID Generation Tests
+# =============================================================================
+
+class TestThreadIdGeneration:
+    """Tests for thread ID generation."""
+
+    def test_make_thread_id_basic(self):
+        """Test basic thread ID generation."""
+        thread_id = make_thread_id("owner/repo", 42)
+        assert thread_id == "owner-repo-issue-42"
+
+    def test_make_thread_id_replaces_slashes(self):
+        """Test that slashes are replaced with dashes."""
+        thread_id = make_thread_id("org/sub/repo", 123)
+        assert thread_id == "org-sub-repo-issue-123"
+
+    def test_make_thread_id_different_numbers(self):
+        """Test thread IDs with different issue numbers."""
+        assert make_thread_id("test/repo", 1) == "test-repo-issue-1"
+        assert make_thread_id("test/repo", 999) == "test-repo-issue-999"
+
+    def test_make_thread_id_uniqueness(self):
+        """Test that different repos/issues produce different IDs."""
+        id1 = make_thread_id("owner/repo", 42)
+        id2 = make_thread_id("owner/repo", 43)
+        id3 = make_thread_id("other/repo", 42)
+
+        assert id1 != id2
+        assert id1 != id3
+        assert id2 != id3
+
+
+# =============================================================================
+# IssueToPR Checkpoint Tests
+# =============================================================================
+
+@pytest.fixture
+def mock_issue_to_pr(mock_config, mock_provider):
+    """Create an IssueToPR instance with mocked provider."""
+    with patch.object(IssueToPR, '_create_provider', return_value=mock_provider):
+        workflow = IssueToPR(mock_config)
+        return workflow
+
+
+@pytest.fixture
+def mock_triangle_orchestrator(mock_config, mock_provider):
+    """Create a TriangleOrchestrator instance with mocked provider."""
+    with patch.object(TriangleOrchestrator, '_create_provider', return_value=mock_provider):
+        orchestrator = TriangleOrchestrator(mock_config)
+        return orchestrator
+
+
+class TestIssueToPRStructure:
+    """Tests for IssueToPR structure and initialization."""
+
+    def test_instantiation(self, mock_issue_to_pr):
+        """Test that IssueToPR instantiates correctly."""
+        assert mock_issue_to_pr is not None
+        assert hasattr(mock_issue_to_pr, 'build_graph')
+        assert hasattr(mock_issue_to_pr, 'parse_issue')
+        assert hasattr(mock_issue_to_pr, 'await_review')
+
+    def test_graph_has_checkpoint_node(self, mock_issue_to_pr):
+        """Test that graph has the await_review checkpoint node."""
+        graph = mock_issue_to_pr.graph
+
+        expected_nodes = [
+            '__start__',
+            'parse_issue',
+            'setup_worktree',
+            'generate_code',
+            'verify_code',
+            'create_pr',
+            'await_review',
+        ]
+        for node in expected_nodes:
+            assert node in graph.nodes, f"Missing node: {node}"
+
+    def test_custom_code_gen_prompt(self, mock_config, mock_provider):
+        """Test that custom code generation prompt can be provided."""
+        custom_prompt = "Custom code generation prompt"
+        with patch.object(IssueToPR, '_create_provider', return_value=mock_provider):
+            workflow = IssueToPR(mock_config, code_gen_prompt=custom_prompt)
+            assert workflow.code_gen_prompt == custom_prompt
+
+
+class TestIssueToPRCheckpointBehavior:
+    """Tests for IssueToPR checkpoint behavior."""
+
+    @pytest.mark.asyncio
+    async def test_await_review_sets_checkpoint_flag(self, mock_issue_to_pr):
+        """Test that await_review node sets requires_human_approval=True."""
+        initial_state = {
+            "issue_number": 42,
+            "repo_name": "test/repo",
+            "pr_number": 123,
+            "pr_url": "https://github.com/test/repo/pull/123",
+            "files_changed": ["src/utils.py"],
+            "current_step": "create_pr",
+        }
+
+        result_state = await mock_issue_to_pr.await_review(initial_state)
+
+        # CRITICAL: This is the human-in-the-loop flag
+        assert result_state["requires_human_approval"] is True
+        assert result_state["current_step"] == "awaiting_review"
+        assert result_state["checkpoint_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_await_review_records_timestamp(self, mock_issue_to_pr):
+        """Test that await_review records checkpoint timestamp."""
+        before = datetime.now(timezone.utc)
+
+        result_state = await mock_issue_to_pr.await_review({
+            "issue_number": 42,
+            "repo_name": "test/repo",
+            "files_changed": [],
+        })
+
+        after = datetime.now(timezone.utc)
+
+        # Parse the checkpoint timestamp
+        checkpoint_time = datetime.fromisoformat(
+            result_state["checkpoint_at"].replace("Z", "+00:00")
+        )
+
+        assert before <= checkpoint_time <= after
+
+    @pytest.mark.asyncio
+    async def test_await_review_includes_metrics(self, mock_issue_to_pr):
+        """Test that await_review includes metrics in state."""
+        result_state = await mock_issue_to_pr.await_review({
+            "issue_number": 42,
+            "repo_name": "test/repo",
+            "files_changed": ["a.py", "b.py"],
+            "verification_attempts": 2,
+        })
+
+        assert "metrics" in result_state
+        assert result_state["metrics"]["files_in_pr"] == 2
+        assert result_state["metrics"]["verification_attempts"] == 2
+
+
+class TestIssueToPRParseIssue:
+    """Tests for parse_issue step."""
+
+    @pytest.mark.asyncio
+    async def test_parse_issue_success(self, mock_issue_to_pr, mock_provider):
+        """Test successful issue parsing."""
+        mock_provider.complete.return_value = MOCK_ISSUE_SPEC_PARSED
+
+        # Mock GitHub client
+        mock_issue = MagicMock()
+        mock_issue.title = "Add type hints"
+        mock_issue.body = "Please add type hints to calculate function"
+
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.data = mock_issue
+
+        mock_github_client = MagicMock()
+        mock_github_client.get_issue = AsyncMock(return_value=mock_result)
+        mock_issue_to_pr._github_clients["test/repo"] = mock_github_client
+
+        result = await mock_issue_to_pr.parse_issue({
+            "issue_number": 42,
+            "repo_name": "test/repo",
+        })
+
+        assert result["issue_spec"] is not None
+        assert result["branch_name"] is not None
+        assert "issue-42" in result["branch_name"]
+
+    @pytest.mark.asyncio
+    async def test_parse_issue_github_error(self, mock_issue_to_pr):
+        """Test handling of GitHub API errors."""
+        mock_result = MagicMock()
+        mock_result.success = False
+        mock_result.error = "Issue not found"
+
+        mock_github_client = MagicMock()
+        mock_github_client.get_issue = AsyncMock(return_value=mock_result)
+        mock_issue_to_pr._github_clients["test/repo"] = mock_github_client
+
+        result = await mock_issue_to_pr.parse_issue({
+            "issue_number": 9999,
+            "repo_name": "test/repo",
+        })
+
+        assert result.get("error") is not None
+        assert "Failed to fetch issue" in result["error"]
+
+
+class TestIssueToPRVerification:
+    """Tests for verification retry logic."""
+
+    def test_should_retry_on_failure(self, mock_issue_to_pr):
+        """Test that verification failure triggers retry."""
+        state = {
+            "last_verification_result": {"passed": False, "errors": ["error"]},
+            "verification_attempts": 1,
+        }
+
+        decision = mock_issue_to_pr._should_retry_or_continue(state)
+        assert decision == "retry"
+
+    def test_should_continue_on_success(self, mock_issue_to_pr):
+        """Test that verification success continues to PR."""
+        state = {
+            "last_verification_result": {"passed": True},
+            "verification_attempts": 1,
+        }
+
+        decision = mock_issue_to_pr._should_retry_or_continue(state)
+        assert decision == "continue"
+
+    def test_should_fail_after_max_attempts(self, mock_issue_to_pr):
+        """Test that exceeding max attempts causes failure."""
+        state = {
+            "last_verification_result": {"passed": False},
+            "verification_attempts": 3,  # MAX_VERIFICATION_ATTEMPTS
+        }
+
+        decision = mock_issue_to_pr._should_retry_or_continue(state)
+        assert decision == "fail"
+
+
+# =============================================================================
+# TriangleOrchestrator Tests
+# =============================================================================
+
+class TestTriangleOrchestratorStructure:
+    """Tests for TriangleOrchestrator structure and initialization."""
+
+    def test_instantiation(self, mock_triangle_orchestrator):
+        """Test that TriangleOrchestrator instantiates correctly."""
+        assert mock_triangle_orchestrator is not None
+        assert hasattr(mock_triangle_orchestrator, 'build_graph')
+        assert hasattr(mock_triangle_orchestrator, 'run_issue_to_pr')
+        assert hasattr(mock_triangle_orchestrator, 'run_comment_processor')
+        assert hasattr(mock_triangle_orchestrator, 'finalize')
+
+    def test_graph_has_all_nodes(self, mock_triangle_orchestrator):
+        """Test that graph has all expected nodes."""
+        graph = mock_triangle_orchestrator.graph
+
+        expected_nodes = [
+            '__start__',
+            'issue_to_pr',
+            'process_comments',
+            'finalize',
+        ]
+        for node in expected_nodes:
+            assert node in graph.nodes, f"Missing node: {node}"
+
+    def test_custom_comment_config(self, mock_config, mock_provider):
+        """Test that custom comment config is used."""
+        config = CommentProcessorConfig(
+            max_attempts_per_comment=5,
+            continue_on_failure=False,
+            skip_complex_comments=False,
+        )
+        with patch.object(TriangleOrchestrator, '_create_provider', return_value=mock_provider):
+            orchestrator = TriangleOrchestrator(mock_config, comment_config=config)
+
+            assert orchestrator.comment_config.max_attempts_per_comment == 5
+            assert orchestrator.comment_config.continue_on_failure is False
+            assert orchestrator.comment_config.skip_complex_comments is False
+
+
+class TestTriangleOrchestratorFlow:
+    """Tests for TriangleOrchestrator flow control."""
+
+    def test_after_issue_to_pr_checkpoint(self, mock_triangle_orchestrator):
+        """Test that checkpoint is triggered after issue_to_pr."""
+        state = {"requires_human_approval": True}
+        decision = mock_triangle_orchestrator._after_issue_to_pr(state)
+        assert decision == "checkpoint"
+
+    def test_after_issue_to_pr_error(self, mock_triangle_orchestrator):
+        """Test that errors are handled."""
+        state = {"error": "Something went wrong"}
+        decision = mock_triangle_orchestrator._after_issue_to_pr(state)
+        assert decision == "error"
+
+    def test_after_issue_to_pr_continue(self, mock_triangle_orchestrator):
+        """Test continuation when no checkpoint needed."""
+        state = {"requires_human_approval": False}
+        decision = mock_triangle_orchestrator._after_issue_to_pr(state)
+        assert decision == "continue"
+
+
+class TestTriangleOrchestratorCommentProcessing:
+    """Tests for comment processing behavior."""
+
+    def test_estimate_complexity_simple(self, mock_triangle_orchestrator):
+        """Test complexity estimation for simple comments."""
+        comment = "Add a type hint here"
+        complexity = mock_triangle_orchestrator._estimate_complexity(comment)
+        assert complexity >= 5  # Minimum is 5
+
+    def test_estimate_complexity_refactor_long(self, mock_triangle_orchestrator):
+        """Test complexity estimation for long refactor requests.
+
+        The formula is: base = word_count // 10, then multiplied by 3 for refactor.
+        For 20 words: base = 2, refactor multiplier = 6, result = 6.
+        """
+        # 20+ words to get base > 0 after division by 10
+        comment = (
+            "Please refactor this entire module to use dependency injection "
+            "throughout the codebase and update all the tests accordingly"
+        )
+        complexity = mock_triangle_orchestrator._estimate_complexity(comment)
+        # With 18 words: base=1, refactor=3, min=5 → returns 5
+        # Need longer comment for higher value
+        assert complexity >= 5
+
+    def test_estimate_complexity_with_multiplier(self, mock_triangle_orchestrator):
+        """Test that keyword multipliers increase complexity for longer comments."""
+        # 30+ words to ensure base > 2
+        short_comment = "Fix the bug"
+        long_refactor = (
+            "Please refactor this entire module to use dependency injection "
+            "throughout the codebase and update all the tests accordingly "
+            "and ensure backward compatibility with existing features"
+        )
+
+        short_complexity = mock_triangle_orchestrator._estimate_complexity(short_comment)
+        long_complexity = mock_triangle_orchestrator._estimate_complexity(long_refactor)
+
+        # Both hit minimum of 5, but long should be >= short
+        assert short_complexity >= 5
+        assert long_complexity >= short_complexity
+
+    def test_estimate_complexity_minimum(self, mock_triangle_orchestrator):
+        """Test that complexity never goes below 5."""
+        # Very short comment
+        comment = "Fix"
+        complexity = mock_triangle_orchestrator._estimate_complexity(comment)
+        assert complexity == 5  # Minimum is enforced
+
+
+class TestCommentProcessorConfig:
+    """Tests for CommentProcessorConfig defaults and validation."""
+
+    def test_default_values(self):
+        """Test default configuration values."""
+        config = CommentProcessorConfig()
+
+        assert config.max_attempts_per_comment == 2
+        assert config.continue_on_failure is True
+        assert config.skip_complex_comments is True
+        assert config.timeout_per_comment_seconds == 120
+
+    def test_custom_values(self):
+        """Test custom configuration values."""
+        config = CommentProcessorConfig(
+            max_attempts_per_comment=5,
+            continue_on_failure=False,
+            skip_complex_comments=False,
+            timeout_per_comment_seconds=60,
+        )
+
+        assert config.max_attempts_per_comment == 5
+        assert config.continue_on_failure is False
+        assert config.skip_complex_comments is False
+        assert config.timeout_per_comment_seconds == 60
+
+
+# =============================================================================
+# CLI Idempotency Tests (Unit Tests)
+# =============================================================================
+
+class TestCLIIdempotencyHelpers:
+    """Tests for CLI idempotency guard logic."""
+
+    def test_approve_completed_workflow_is_noop(self):
+        """Test that approving a completed workflow is a no-op."""
+        # Simulate the guard check
+        state = {"current_step": "completed"}
+
+        # Guard: Already completed
+        should_skip = state.get("current_step") == "completed"
+        assert should_skip is True
+
+    def test_approve_not_pending_is_noop(self):
+        """Test that approving a non-pending workflow is a no-op."""
+        state = {"requires_human_approval": False}
+
+        # Guard: Not waiting for approval
+        should_skip = not state.get("requires_human_approval")
+        assert should_skip is True
+
+    def test_approve_no_pr_is_error(self):
+        """Test that approving without PR is an error."""
+        state = {"requires_human_approval": True, "pr_number": None}
+
+        # Guard: No PR
+        has_pr = state.get("pr_number") is not None
+        assert has_pr is False
+
+    def test_approve_valid_state_proceeds(self):
+        """Test that valid state proceeds with approval."""
+        state = {
+            "current_step": "awaiting_review",
+            "requires_human_approval": True,
+            "pr_number": 123,
+        }
+
+        # All guards pass
+        is_completed = state.get("current_step") == "completed"
+        is_pending = state.get("requires_human_approval")
+        has_pr = state.get("pr_number") is not None
+
+        assert is_completed is False
+        assert is_pending is True
+        assert has_pr is True

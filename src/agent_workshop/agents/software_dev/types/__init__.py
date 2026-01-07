@@ -31,7 +31,9 @@ from agent_workshop.agents.software_dev.types.metrics import (
     WorkflowExecution,
 )
 from agent_workshop.agents.software_dev.types.state import (
+    CommentProcessorResults,
     IssueSpecification,
+    IssueToPRState,
     TriangleState,
     VerificationResult,
 )
@@ -39,6 +41,8 @@ from agent_workshop.agents.software_dev.types.state import (
 __all__ = [
     # State types (LangGraph compatible)
     "TriangleState",
+    "IssueToPRState",
+    "CommentProcessorResults",
     "IssueSpecification",
     "VerificationResult",
     # Metrics types (operational, quality, compound)

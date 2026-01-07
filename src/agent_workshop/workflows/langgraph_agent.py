@@ -3,11 +3,14 @@ LangGraph Agent base class for multi-step workflows.
 
 Enables complex agent workflows with state management
 while maintaining single-message pattern externally.
+
+Supports checkpointing for human-in-the-loop workflows via SqliteSaver.
 """
 
 from typing import Any
 
 from langfuse import observe
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
 
 from ..config import Config, get_config
@@ -78,16 +81,25 @@ class LangGraphAgent:
         config: Configuration instance
         provider: LLM provider (automatically selected)
         graph: Compiled LangGraph workflow
+        checkpointer: Optional checkpoint saver for human-in-the-loop workflows
     """
 
-    def __init__(self, config: Config | None = None):
+    def __init__(
+        self,
+        config: Config | None = None,
+        checkpointer: BaseCheckpointSaver | None = None,
+    ):
         """
         Initialize LangGraph agent with configuration.
 
         Args:
             config: Configuration instance (uses get_config() if None)
+            checkpointer: Optional checkpoint saver for persistence.
+                         If provided, enables human-in-the-loop workflows
+                         where execution can pause and resume.
         """
         self.config = config or get_config()
+        self.checkpointer = checkpointer
         self.provider = self._create_provider()
         self.graph = self.build_graph()
 
@@ -130,6 +142,15 @@ class LangGraphAgent:
         2. Calls self.provider.complete() for LLM interactions
         3. Returns updated state dict
 
+        For checkpointed workflows, use self.checkpointer in compile():
+            workflow.compile(checkpointer=self.checkpointer)
+
+        For human-in-the-loop workflows, use interrupt_after:
+            workflow.compile(
+                checkpointer=self.checkpointer,
+                interrupt_after=["await_review"]
+            )
+
         Returns:
             Compiled StateGraph
 
@@ -149,7 +170,11 @@ class LangGraphAgent:
 
                 workflow.set_entry_point("step1")
 
+                # Without checkpointing
                 return workflow.compile()
+
+                # With checkpointing (for human-in-the-loop)
+                # return workflow.compile(checkpointer=self.checkpointer)
             ```
         """
         raise NotImplementedError(
@@ -158,7 +183,11 @@ class LangGraphAgent:
         )
 
     @observe(name="langgraph_workflow")
-    async def run(self, input: dict[str, Any]) -> dict[str, Any]:
+    async def run(
+        self,
+        input: dict[str, Any],
+        thread_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Execute the LangGraph workflow.
 
@@ -167,6 +196,9 @@ class LangGraphAgent:
 
         Args:
             input: Input state dictionary
+            thread_id: Optional thread ID for checkpoint persistence.
+                      If provided with a checkpointer, enables resume
+                      from previous execution state.
 
         Returns:
             Final state dictionary after all workflow steps
@@ -174,7 +206,12 @@ class LangGraphAgent:
         Raises:
             Exception: If workflow execution fails
         """
-        result = await self.graph.ainvoke(input)
+        # Build config for checkpointing if thread_id provided
+        config = None
+        if thread_id and self.checkpointer:
+            config = {"configurable": {"thread_id": thread_id}}
+
+        result = await self.graph.ainvoke(input, config=config)
         return result
 
     def estimate_tokens(self, text: str) -> int:

@@ -335,3 +335,58 @@ SAMPLE_COMMENT_NO_PATH = {
 SAMPLE_FILE_CONTENT = """def calculate(width, height):
     return width * height
 """
+
+# =============================================================================
+# IssueToPR / Triangle Orchestrator Mock Responses
+# =============================================================================
+
+# Mock issue specification parsed from GitHub issue
+MOCK_ISSUE_SPEC_PARSED = json.dumps({
+    "requirements": [
+        "Add type hints to calculate function",
+        "Add docstring with Args and Returns",
+    ],
+    "acceptance_criteria": [
+        "Function has type hints",
+        "Docstring follows Google style",
+    ],
+    "files_to_create": [],
+    "files_to_modify": ["src/utils.py"],
+    "complexity": "simple",
+})
+
+# Mock code generation response
+MOCK_CODE_GENERATION = """Here's the implementation:
+
+```src/utils.py
+def calculate(width: float, height: float) -> float:
+    \"\"\"Calculate area of a rectangle.
+
+    Args:
+        width: Width of the rectangle.
+        height: Height of the rectangle.
+
+    Returns:
+        Area of the rectangle.
+    \"\"\"
+    return width * height
+```
+"""
+
+# Mock GitHub issue data
+MOCK_GITHUB_ISSUE = {
+    "number": 42,
+    "title": "Add type hints to calculate function",
+    "body": "Please add type hints and a docstring to the calculate function in src/utils.py.",
+    "state": "open",
+    "labels": ["enhancement"],
+}
+
+# Mock GitHub PR data
+MOCK_GITHUB_PR = {
+    "number": 123,
+    "url": "https://github.com/test/repo/pull/123",
+    "title": "feat: Add type hints to calculate function",
+    "state": "open",
+    "draft": True,
+}

@@ -637,6 +637,38 @@ class GitHubClient:
             source="gh",
         )
 
+    async def mark_ready_for_review(
+        self,
+        pr_number: int,
+    ) -> GitHubResult:
+        """Mark a draft PR as ready for review.
+
+        Args:
+            pr_number: PR number.
+
+        Returns:
+            GitHubResult with success status.
+        """
+        args = [
+            "pr", "ready", str(pr_number),
+            "--repo", self.repo,
+        ]
+
+        exit_code, stdout, stderr = await _run_gh(args, self.config.gh_timeout)
+
+        if exit_code != 0:
+            return GitHubResult(
+                success=False,
+                error=stderr or stdout,
+                source="gh",
+            )
+
+        return GitHubResult(
+            success=True,
+            data={"pr_number": pr_number, "ready": True},
+            source="gh",
+        )
+
 
 def _detect_comment_source(username: str) -> str:
     """Detect the source type of a comment based on username.

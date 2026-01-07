@@ -10,6 +10,9 @@ Commands for controlling human-gated triangle workflows:
 
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
+
 import click
 from rich.console import Console
 from rich.table import Table
@@ -24,7 +27,20 @@ console = Console()
 def _get_persistence():
     """Lazy import of TrianglePersistence."""
     from agent_workshop.utils.persistence import TrianglePersistence
+
     return TrianglePersistence()
+
+
+def _get_async_checkpointer_context():
+    """Lazy import of async checkpointer context manager."""
+    from agent_workshop.utils.persistence import get_async_checkpointer_context
+
+    return get_async_checkpointer_context()
+
+
+def _run_async(coro):
+    """Run async function in sync context."""
+    return asyncio.get_event_loop().run_until_complete(coro)
 
 
 @click.group()
@@ -75,26 +91,71 @@ def start(
     Example:
         triangle start --issue 42 --repo owner/repo
     """
+    from agent_workshop import Config
+    from agent_workshop.agents.software_dev import IssueToPR, make_thread_id
+
+    thread_id = make_thread_id(repo, issue)
+
     if branch is None:
-        branch = f"auto/triangle-v1/issue-{issue}"
+        branch = f"auto/issue-{issue}"
 
     if dry_run:
         console.print("[yellow]DRY RUN[/yellow] - Would start triangle workflow:")
         console.print(f"  Issue: #{issue}")
         console.print(f"  Repo: {repo}")
         console.print(f"  Branch: {branch}")
-        console.print(f"  Thread ID: issue-{issue}")
+        console.print(f"  Thread ID: {thread_id}")
         return
 
-    # TODO: Actually start the workflow when IssueToPR is implemented
+    # Check if workflow already exists
+    persistence = _get_persistence()
+    existing = persistence.get_thread_state(thread_id)
+    if existing:
+        console.print(f"[yellow]Warning:[/yellow] Workflow {thread_id} already exists.")
+        console.print(f"  Current step: {existing.get('current_step', 'unknown')}")
+        if existing.get("requires_human_approval"):
+            console.print("  Status: [yellow]Awaiting approval[/yellow]")
+            console.print(f"\n  Use: triangle approve {thread_id}")
+        return
+
     console.print("[bold green]Starting triangle workflow[/bold green]")
     console.print(f"  Issue: #{issue}")
     console.print(f"  Repo: {repo}")
-    console.print(f"  Branch: {branch}")
-    console.print(f"  Thread ID: issue-{issue}")
+    console.print(f"  Thread ID: {thread_id}")
     console.print()
-    console.print("[yellow]Note:[/yellow] IssueToPR workflow not yet implemented.")
-    console.print("Workflow will be available in Phase 2.")
+
+    # Create and run IssueToPR workflow
+    try:
+        async def run_workflow():
+            async with _get_async_checkpointer_context() as checkpointer:
+                workflow = IssueToPR(
+                    config=Config(),
+                    checkpointer=checkpointer,
+                )
+                return await workflow.run(
+                    {"issue_number": issue, "repo_name": repo},
+                    thread_id=thread_id,
+                )
+
+        with console.status("[bold blue]Running IssueToPR workflow..."):
+            result = _run_async(run_workflow())
+
+        if result.get("error"):
+            console.print(f"[red]Error:[/red] {result['error']}")
+            return
+
+        if result.get("requires_human_approval"):
+            console.print()
+            console.print("[yellow]Workflow paused - awaiting human review[/yellow]")
+            if result.get("pr_url"):
+                console.print(f"  PR: {result['pr_url']}")
+            console.print()
+            console.print(f"  After reviewing, run: triangle approve {thread_id}")
+        else:
+            console.print("[green]Workflow completed[/green]")
+
+    except Exception as e:
+        console.print(f"[red]Error starting workflow:[/red] {e}")
 
 
 @triangle.command()
@@ -120,8 +181,8 @@ def approve(
     The workflow will continue from where it was paused.
 
     Examples:
-        triangle approve issue-42
-        triangle approve issue-42 --step pr_review
+        triangle approve owner-repo-issue-42
+        triangle approve owner-repo-issue-42 --step awaiting_review
         triangle approve --all
     """
     persistence = _get_persistence()
@@ -134,10 +195,7 @@ def approve(
     if approve_all:
         console.print(f"[bold]Approving all {len(pending)} pending workflows...[/bold]")
         for p in pending:
-            console.print(f"  ✓ Approved: {p.display_name} at {p.current_step}")
-            # TODO: Actually resume workflows when implemented
-        console.print()
-        console.print("[yellow]Note:[/yellow] Actual workflow resumption not yet implemented.")
+            _approve_single_workflow(p.thread_id, persistence)
         return
 
     if thread_id is None:
@@ -151,7 +209,18 @@ def approve(
     # Find the specific workflow
     workflow = next((p for p in pending if p.thread_id == thread_id), None)
     if workflow is None:
-        console.print(f"[red]Error:[/red] No pending workflow found with ID: {thread_id}")
+        # Check if it exists but isn't pending
+        state = persistence.get_thread_state(thread_id)
+        if state:
+            if state.get("current_step") == "completed":
+                console.print(f"[green]Workflow {thread_id} already completed.[/green]")
+            else:
+                console.print(
+                    f"[yellow]Workflow {thread_id} not waiting for approval.[/yellow]"
+                )
+                console.print(f"  Current step: {state.get('current_step', 'unknown')}")
+        else:
+            console.print(f"[red]Error:[/red] No workflow found with ID: {thread_id}")
         return
 
     if step and step != workflow.current_step:
@@ -161,10 +230,108 @@ def approve(
         )
         return
 
-    console.print(f"[bold green]Approved:[/bold green] {workflow.display_name}")
-    console.print(f"  Step: {workflow.current_step}")
+    _approve_single_workflow(thread_id, persistence)
+
+
+def _approve_single_workflow(thread_id: str, persistence) -> None:
+    """Approve and resume a single workflow with idempotency guards."""
+    import subprocess
+
+    from agent_workshop import Config
+    from agent_workshop.agents.software_dev import TriangleOrchestrator
+
+    state = persistence.get_thread_state(thread_id)
+
+    # Guard: Already completed
+    if state.get("current_step") == "completed":
+        console.print(f"[green]✓ {thread_id} already completed[/green]")
+        return
+
+    # Guard: Not waiting for approval
+    if not state.get("requires_human_approval"):
+        console.print(f"[yellow]⚠ {thread_id} not waiting for approval[/yellow]")
+        return
+
+    # Guard: No PR (can't approve without PR)
+    pr_number = state.get("pr_number")
+    if not pr_number:
+        console.print(f"[red]✗ {thread_id} has no PR to approve[/red]")
+        return
+
+    # Guard: Check if PR is already merged (idempotency)
+    repo_name = state.get("repo_name", "")
+    if repo_name and pr_number:
+        try:
+            result = subprocess.run(
+                ["gh", "pr", "view", str(pr_number), "--repo", repo_name, "--json", "state"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                import json
+                pr_state = json.loads(result.stdout).get("state", "")
+                if pr_state == "MERGED":
+                    console.print(f"[green]✓ {thread_id} already completed (PR #{pr_number} merged)[/green]")
+                    return
+                elif pr_state == "CLOSED":
+                    console.print(f"[yellow]⚠ PR #{pr_number} is closed but not merged[/yellow]")
+                    return
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+            # If we can't check, proceed with caution
+            pass
+
+    # Calculate review duration
+    checkpoint_at = state.get("checkpoint_at")
+    review_duration = None
+    if checkpoint_at:
+        try:
+            checkpoint_time = datetime.fromisoformat(checkpoint_at.replace("Z", "+00:00"))
+            review_duration = (datetime.now(timezone.utc) - checkpoint_time).total_seconds()
+        except (ValueError, TypeError):
+            pass
+
+    console.print(f"[bold green]Approving:[/bold green] {thread_id}")
+    if review_duration:
+        hours = int(review_duration // 3600)
+        minutes = int((review_duration % 3600) // 60)
+        if hours > 0:
+            console.print(f"  Review time: {hours}h {minutes}m")
+        else:
+            console.print(f"  Review time: {minutes}m")
+
+    # Record metrics
+    state["metrics"] = state.get("metrics", {})
+    state["metrics"]["review_duration_seconds"] = review_duration
+
+    # Resume workflow with TriangleOrchestrator
+    async def resume_workflow():
+        orchestrator = TriangleOrchestrator(config=Config())
+        return await orchestrator.resume_from_checkpoint(state)
+
     console.print()
-    console.print("[yellow]Note:[/yellow] Actual workflow resumption not yet implemented.")
+    try:
+        with console.status("[bold blue]Resuming workflow..."):
+            result = _run_async(resume_workflow())
+
+        if result.get("error"):
+            console.print(f"[red]Error:[/red] {result['error']}")
+            return
+
+        if result.get("current_step") == "completed":
+            console.print()
+            console.print("[bold green]✅ Workflow completed![/bold green]")
+            console.print(f"  PR #{result.get('pr_number')} merged")
+
+            follow_up = result.get("follow_up_issues", [])
+            if follow_up:
+                console.print(f"  Follow-up issues created: {follow_up}")
+        else:
+            console.print(f"[yellow]Workflow paused at: {result.get('current_step')}[/yellow]")
+
+    except Exception as e:
+        console.print(f"[red]Resume failed:[/red] {e}")
+        raise
 
 
 @triangle.command()
@@ -185,7 +352,7 @@ def status(
 
     Examples:
         triangle status
-        triangle status issue-42
+        triangle status owner-repo-issue-42
         triangle status --verbose
     """
     persistence = _get_persistence()
@@ -200,14 +367,47 @@ def status(
         console.print(f"[bold]Workflow: {thread_id}[/bold]")
         console.print()
 
-        if verbose:
-            for key, value in state.items():
-                console.print(f"  {key}: {value}")
+        # Status indicator
+        if state.get("requires_human_approval"):
+            console.print("  Status: [yellow]⏸️  PENDING APPROVAL[/yellow]")
+        elif state.get("current_step") == "completed":
+            console.print("  Status: [green]✅ COMPLETED[/green]")
+        elif state.get("error"):
+            console.print("  Status: [red]❌ ERROR[/red]")
         else:
-            console.print(f"  Current step: {state.get('current_step', 'unknown')}")
-            console.print(f"  Requires approval: {state.get('requires_human_approval', False)}")
-            if state.get('error'):
-                console.print(f"  Error: {state.get('error')}")
+            console.print("  Status: [blue]🔄 IN PROGRESS[/blue]")
+
+        console.print(f"  Step: {state.get('current_step', 'unknown')}")
+
+        if state.get("pr_url"):
+            console.print(f"  PR: {state['pr_url']}")
+
+        # Show wait time if checkpointed
+        checkpoint_at = state.get("checkpoint_at")
+        if checkpoint_at and state.get("requires_human_approval"):
+            try:
+                checkpoint_time = datetime.fromisoformat(
+                    checkpoint_at.replace("Z", "+00:00")
+                )
+                wait_time = (datetime.now(timezone.utc) - checkpoint_time).total_seconds()
+                hours = int(wait_time // 3600)
+                minutes = int((wait_time % 3600) // 60)
+                if hours > 0:
+                    console.print(f"  Waiting: {hours}h {minutes}m")
+                else:
+                    console.print(f"  Waiting: {minutes}m")
+            except (ValueError, TypeError):
+                pass
+
+        if state.get("error"):
+            console.print(f"  [red]Error:[/red] {state['error']}")
+
+        if verbose:
+            console.print()
+            console.print("[dim]Full state:[/dim]")
+            for key, value in sorted(state.items()):
+                if key not in ("current_step", "error", "pr_url", "requires_human_approval"):
+                    console.print(f"  {key}: {value}")
         return
 
     # Show all workflows
@@ -218,14 +418,31 @@ def status(
     console.print()
 
     if pending:
-        console.print(f"[yellow]Pending Approval ({len(pending)}):[/yellow]")
+        console.print(f"[yellow]⏸️  Pending Approval ({len(pending)}):[/yellow]")
         table = Table(show_header=True)
         table.add_column("Thread ID", style="cyan")
         table.add_column("Issue/Epic", style="green")
-        table.add_column("Current Step", style="yellow")
+        table.add_column("Step", style="yellow")
+        table.add_column("Waiting", style="dim")
 
         for p in pending:
-            table.add_row(p.thread_id, p.display_name, p.current_step)
+            # Calculate wait time
+            wait_str = ""
+            if p.state_values:
+                checkpoint_at = p.state_values.get("checkpoint_at")
+                if checkpoint_at:
+                    try:
+                        checkpoint_time = datetime.fromisoformat(
+                            checkpoint_at.replace("Z", "+00:00")
+                        )
+                        wait = (datetime.now(timezone.utc) - checkpoint_time).total_seconds()
+                        hours = int(wait // 3600)
+                        mins = int((wait % 3600) // 60)
+                        wait_str = f"{hours}h {mins}m" if hours else f"{mins}m"
+                    except (ValueError, TypeError):
+                        pass
+
+            table.add_row(p.thread_id, p.display_name, p.current_step, wait_str)
 
         console.print(table)
         console.print()
@@ -236,7 +453,7 @@ def status(
         active = all_threads - pending_ids
 
         if active:
-            console.print(f"[green]Active ({len(active)}):[/green]")
+            console.print(f"[green]🔄 Active ({len(active)}):[/green]")
             for t in sorted(active):
                 console.print(f"  • {t}")
             console.print()
