@@ -31,6 +31,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "jinja2>=3.1.6",
     "claude-code-sdk>=0.0.25",
+    "langgraph-checkpoint-sqlite>=3.0.1",
 ]
 
 [project.urls]
