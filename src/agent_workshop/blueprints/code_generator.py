@@ -512,10 +512,11 @@ class {class_name}(LangGraphAgent):
         return f'''
     async def {step.name}(self, state: {class_name}State) -> {class_name}State:
         """{step.description or f"Execute shell command: {step.name}"}"""
-        # Format command with state values
+        import shlex
+        # Format command with state values - use shlex.quote() to prevent shell injection
         command_template = {command_repr}
         command = command_template.format(
-            **{{k: (str(v) if v is not None else "")
+            **{{k: shlex.quote(str(v)) if v is not None else ""
                for k, v in state.items()}}
         )
 
