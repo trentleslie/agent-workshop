@@ -5,10 +5,10 @@ Provides helpers for:
 - Langfuse integration
 - Prompt formatting
 - Cost estimation
-- Calculator operations
+- String formatting
 """
 
-from .calculator import add, divide, multiply, subtract
 from .langfuse_helpers import setup_langfuse, test_langfuse_connection
+from .formatter import format_bytes, format_duration
 
-__all__ = ["setup_langfuse", "test_langfuse_connection", "add", "subtract", "multiply", "divide"]
+__all__ = ["setup_langfuse", "test_langfuse_connection", "format_bytes", "format_duration"]
