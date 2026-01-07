@@ -517,3 +517,253 @@ async def verify_generated_code(
         return await verify(temp_path, level, config)
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+# =============================================================================
+# Project-Level Verification (uses .triangle.toml config)
+# =============================================================================
+
+
+async def verify_project(
+    working_dir: str | Path,
+    triangle_config: Any | None = None,
+) -> VerificationResult:
+    """Verify entire project using .triangle.toml config or auto-detection.
+
+    This is the top-level verification function for the Triangle workflow.
+    It uses a priority order:
+    1. Explicit check_command from .triangle.toml
+    2. Auto-detected scripts (scripts/check.sh, Makefile, package.json)
+    3. Fallback to running individual tools (ruff, black, pyright)
+
+    Args:
+        working_dir: Path to the project root directory
+        triangle_config: Optional TriangleConfig (loaded if not provided)
+
+    Returns:
+        VerificationResult with project verification status
+
+    Example:
+        result = await verify_project("/path/to/project")
+        if result.passed:
+            print("All checks passed!")
+        else:
+            print(f"Failed: {result.errors}")
+    """
+    import time
+
+    start_time = time.monotonic()
+    working_dir = Path(working_dir)
+
+    # Load triangle config if not provided
+    if triangle_config is None:
+        from agent_workshop.agents.software_dev.config import load_triangle_config
+
+        triangle_config = load_triangle_config(working_dir)
+
+    # 1. Try explicit check_command from config
+    if triangle_config.verification.check_command:
+        return await _run_configured_commands(
+            check_cmd=triangle_config.verification.check_command,
+            fix_cmd=triangle_config.verification.fix_command,
+            working_dir=working_dir,
+            start_time=start_time,
+        )
+
+    # 2. Auto-detect project verification strategy
+    strategy = _detect_verification_strategy(working_dir)
+    if strategy:
+        check_cmd, fix_cmd = strategy
+        return await _run_configured_commands(
+            check_cmd=check_cmd,
+            fix_cmd=fix_cmd,
+            working_dir=working_dir,
+            start_time=start_time,
+        )
+
+    # 3. Fallback to individual tool invocations
+    return await _run_fallback_verification(
+        working_dir=working_dir,
+        tools=triangle_config.verification.fallback_tools,
+        start_time=start_time,
+    )
+
+
+def _detect_verification_strategy(
+    working_dir: Path,
+) -> tuple[str, str | None] | None:
+    """Detect project's verification approach.
+
+    Checks for common project patterns in priority order:
+    1. scripts/check.sh (with optional scripts/fix.sh)
+    2. Makefile with "check:" target
+    3. package.json with "lint" script
+
+    Args:
+        working_dir: Project root directory
+
+    Returns:
+        Tuple of (check_command, fix_command) or None if no strategy detected
+    """
+    # Check for project scripts
+    check_script = working_dir / "scripts" / "check.sh"
+    if check_script.exists():
+        fix_script = working_dir / "scripts" / "fix.sh"
+        return (
+            "./scripts/check.sh",
+            "./scripts/fix.sh" if fix_script.exists() else None,
+        )
+
+    # Check for Makefile with check target
+    makefile = working_dir / "Makefile"
+    if makefile.exists():
+        try:
+            content = makefile.read_text()
+            if "check:" in content:
+                fix_cmd = "make fix" if "fix:" in content else None
+                return ("make check", fix_cmd)
+        except OSError:
+            pass
+
+    # Check for npm scripts (package.json)
+    pkg_json = working_dir / "package.json"
+    if pkg_json.exists():
+        try:
+            import json
+
+            pkg = json.loads(pkg_json.read_text())
+            scripts = pkg.get("scripts", {})
+            if "lint" in scripts:
+                fix_cmd = "npm run lint:fix" if "lint:fix" in scripts else None
+                return ("npm run lint", fix_cmd)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    return None
+
+
+async def _run_configured_commands(
+    check_cmd: str,
+    fix_cmd: str | None,
+    working_dir: Path,
+    start_time: float,
+) -> VerificationResult:
+    """Run configured check (and optionally fix) commands.
+
+    Args:
+        check_cmd: Command to run verification (e.g., "./scripts/check.sh")
+        fix_cmd: Optional command to auto-fix issues first
+        working_dir: Directory to run commands in
+        start_time: Start time for duration calculation
+
+    Returns:
+        VerificationResult with command output
+    """
+    import time
+
+    result = VerificationResult(
+        level=VerificationLevel.TEST,  # Scripts typically run full suite
+        passed=False,
+    )
+
+    # Run fix command first if available
+    if fix_cmd:
+        exit_code, stdout, stderr = await _run_command(
+            ["bash", "-c", fix_cmd],
+            cwd=working_dir,
+            timeout=300,
+        )
+        if exit_code != 0:
+            result.add_warning(f"Fix command returned non-zero: {stderr or stdout}")
+
+    # Run check command
+    exit_code, stdout, stderr = await _run_command(
+        ["bash", "-c", check_cmd],
+        cwd=working_dir,
+        timeout=600,
+    )
+
+    output = stdout + "\n" + stderr if stderr else stdout
+
+    if exit_code == 0:
+        result.passed = True
+        result.lint_valid = True
+        result.types_valid = True
+        result.tests_pass = True
+        result.highest_passing_level = VerificationLevel.TEST
+        result.lint_output = output
+    else:
+        result.passed = False
+        result.lint_output = output
+        # Parse output for specific errors
+        for line in output.split("\n"):
+            if line.strip() and ("error" in line.lower() or "failed" in line.lower()):
+                result.add_error(line.strip())
+        if not result.errors:
+            result.add_error(f"Check command failed with exit code {exit_code}")
+
+    result.duration_seconds = time.monotonic() - start_time
+    return result
+
+
+async def _run_fallback_verification(
+    working_dir: Path,
+    tools: list[str],
+    start_time: float,
+) -> VerificationResult:
+    """Run individual tools when no project scripts exist.
+
+    Args:
+        working_dir: Project root directory
+        tools: List of tools to run (e.g., ["ruff", "black", "pyright"])
+        start_time: Start time for duration calculation
+
+    Returns:
+        VerificationResult with combined tool output
+    """
+    import time
+
+    result = VerificationResult(
+        level=VerificationLevel.LINT,
+        passed=False,
+    )
+
+    all_passed = True
+    outputs: list[str] = []
+
+    for tool in tools:
+        if tool == "ruff":
+            cmd = ["ruff", "check", "."]
+        elif tool == "black":
+            cmd = ["black", "--check", "."]
+        elif tool == "pyright":
+            cmd = ["pyright"]
+        elif tool == "mypy":
+            cmd = ["mypy", "."]
+        else:
+            continue
+
+        exit_code, stdout, stderr = await _run_command(
+            cmd,
+            cwd=working_dir,
+            timeout=120,
+        )
+
+        output = stdout or stderr
+
+        if exit_code != 0:
+            all_passed = False
+            # Extract error lines
+            for line in output.split("\n"):
+                if line.strip():
+                    result.add_error(f"[{tool}] {line.strip()}")
+
+        outputs.append(f"=== {tool} ===\n{output}")
+
+    result.lint_output = "\n\n".join(outputs)
+    result.lint_valid = all_passed
+    result.passed = all_passed
+    result.highest_passing_level = VerificationLevel.LINT if all_passed else None
+    result.duration_seconds = time.monotonic() - start_time
+
+    return result

@@ -33,6 +33,7 @@ from agent_workshop.agents.software_dev.utils.verification import (
     VerificationLevel,
     VerificationResult,
     verify,
+    verify_project,
 )
 
 __all__ = [
@@ -61,4 +62,5 @@ __all__ = [
     "VerificationLevel",
     "VerificationResult",
     "verify",
+    "verify_project",
 ]

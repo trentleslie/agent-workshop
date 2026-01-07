@@ -1,0 +1,29 @@
+# Triangle workflow configuration for agent-workshop
+#
+# This file configures how Triangle behaves when processing issues and PRs
+# in this repository. Other projects can create their own .triangle.toml
+# to customize behavior.
+
+[verification]
+# Commands to run for verification (scripts in this repo)
+fix_command = "./scripts/fix.sh"
+check_command = "./scripts/check.sh"
+# Fallback tools if scripts don't exist
+fallback_tools = ["ruff", "black", "pyright"]
+
+[style]
+# Code style tools used in this project
+formatter = "black"
+linter = "ruff"
+type_checker = "pyright"
+# Project guidelines file (injected into code generation prompts)
+guidelines_file = "dev_guidelines.md"
+# Line length for formatting
+line_length = 88
+
+[commits]
+# Commit message convention (conventional, angular, none)
+convention = "conventional"
+# Pattern for linking issues in PR body
+# {issue} is replaced with the issue number
+link_pattern = "Closes #{issue}"

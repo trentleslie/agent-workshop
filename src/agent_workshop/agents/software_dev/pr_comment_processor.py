@@ -453,6 +453,7 @@ Return JSON:
         Step 5: Generate the code fix based on analysis.
 
         Uses LLM to generate the complete fixed file content.
+        Injects code style requirements from .triangle.toml config.
 
         Args:
             state: Current workflow state with analysis_result
@@ -460,6 +461,8 @@ Return JSON:
         Returns:
             Updated state with proposed_fix
         """
+        from agent_workshop.agents.software_dev.config import load_triangle_config
+
         analysis = state.get("analysis_result", {})
 
         # Skip if analysis says can't auto-fix
@@ -476,11 +479,31 @@ Return JSON:
         file_content = state.get("current_file_content", "")
         file_path = state.get("current_file_path", "unknown")
 
+        # Load project config for style requirements
+        working_dir = state.get("working_dir") or self._working_dir
+        triangle_config = load_triangle_config(working_dir)
+
+        # Build style requirements from config
+        style_requirements = f"""
+## Code Style Requirements (MUST FOLLOW)
+- Use type hints on all parameters and return types
+- Add docstrings with Args/Returns for public functions
+- Follow {triangle_config.style.formatter} formatting ({triangle_config.style.line_length} char line length)
+- Ensure file ends with a single trailing newline
+"""
+
+        # Format the base prompt
         prompt = self.generate_fix_prompt.format(
             comment_body=comment.get("body", ""),
             analysis_result=json.dumps(analysis, indent=2),
             file_path=file_path,
             file_content=file_content,
+        )
+
+        # Inject style requirements before the IMPORTANT section
+        prompt = prompt.replace(
+            "IMPORTANT:",
+            f"{style_requirements}\n\nIMPORTANT:",
         )
 
         messages = [{"role": "user", "content": prompt}]
