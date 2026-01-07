@@ -32,6 +32,8 @@ dependencies = [
     "jinja2>=3.1.6",
     "claude-code-sdk>=0.0.25",
     "langgraph-checkpoint-sqlite>=3.0.1",
+    "click>=8.3.1",
+    "rich>=14.2.0",
 ]
 
 [project.urls]
@@ -39,6 +41,9 @@ Homepage = "https://github.com/trentleslie/agent-workshop"
 Documentation = "https://github.com/trentleslie/agent-workshop#readme"
 Repository = "https://github.com/trentleslie/agent-workshop"
 Issues = "https://github.com/trentleslie/agent-workshop/issues"
+
+[project.scripts]
+triangle = "agent_workshop.cli.main:main"
 
 [project.optional-dependencies]
 dev = [
