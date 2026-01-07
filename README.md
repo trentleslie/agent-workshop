@@ -72,7 +72,7 @@ Create `.triangle.toml` in your project root:
 
 ```toml
 [verification]
-# Commands for code verification
+# Commands for code verification (optional)
 check_command = "./scripts/check.sh"
 fix_command = "./scripts/fix.sh"
 fallback_tools = ["ruff", "black", "pyright"]
@@ -91,7 +91,12 @@ convention = "conventional"
 link_pattern = "Closes #{issue}"
 ```
 
-If no `.triangle.toml` exists, Triangle auto-detects project type (Python/Node/Go) and uses sensible defaults.
+**Verification Scripts (optional):**
+- `check_command` - Script to run all checks (e.g., lint, type check, tests)
+- `fix_command` - Script to auto-fix formatting and linting issues
+- If scripts don't exist, Triangle falls back to running `fallback_tools` directly
+
+**Auto-detection:** If no `.triangle.toml` exists, Triangle auto-detects project type (Python/Node/Go) and uses sensible defaults.
 
 ---
 
