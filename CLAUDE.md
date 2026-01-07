@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**agent-workshop** is a Python framework for building automation-focused AI agents with full observability. This repository is for framework development - end users install it via PyPI (`uv add agent-workshop` or `pip install agent-workshop`).
+**agent-workshop** is an agentic PR automation framework with human-gated checkpoints and full observability. This repository is for framework development - end users install it via PyPI (`uv add agent-workshop` or `pip install agent-workshop`).
+
+**Primary Feature**: Triangle Workflow - automated GitHub issue → PR generation with human-gated review checkpoints. See [Triangle Workflow](#triangle-workflow-primary-feature) section.
 
 **Core Design**: Single-message pattern (input → output) for automation, NOT streaming conversations or chat interfaces.
 
@@ -56,6 +58,63 @@ Provider selection logic is in `src/agent_workshop/config.py` via `get_provider_
    - `software_dev/`: CodeReviewer, PRPipeline, presets for code review
    - `data_science/`: NotebookValidator (generated from blueprint)
 
+## Triangle Workflow (Primary Feature)
+
+The main feature is the Triangle CLI for automated PR generation from GitHub issues with human-gated review checkpoints.
+
+### Triangle Components
+
+- `src/agent_workshop/cli/triangle.py`: CLI commands (`triangle start`, `triangle approve`, `triangle status`)
+- `src/agent_workshop/agents/software_dev/issue_to_pr.py`: Issue-to-PR LangGraph workflow
+- `src/agent_workshop/agents/software_dev/triangle_orchestrator.py`: Full cycle orchestration
+- `src/agent_workshop/agents/software_dev/pr_comment_processor.py`: Review comment processing and auto-fixes
+- `src/agent_workshop/agents/software_dev/config/triangle_config.py`: Project configuration schema
+
+### Triangle Key Patterns
+
+- **Human-gated checkpoints**: LangGraph `interrupt_after` pauses workflow for review
+- **SQLite persistence**: `src/agent_workshop/utils/persistence.py` stores checkpoint state
+- **Git worktrees**: Parallel workflows via isolated worktrees in `get_worktree_path()`
+- **Configurable verification**: `.triangle.toml` defines project-specific tools and commands
+- **Dynamic prompt injection**: Style requirements from config injected into code generation
+
+### Triangle CLI Commands
+
+```bash
+# Start workflow for a GitHub issue
+triangle start --issue 42 --repo owner/repo
+
+# Check active workflow status
+triangle status
+
+# Resume after human review approval
+triangle approve <thread-id>
+```
+
+### .triangle.toml Configuration
+
+Projects can customize Triangle behavior via `.triangle.toml`:
+
+```toml
+[verification]
+check_command = "./scripts/check.sh"
+fix_command = "./scripts/fix.sh"
+fallback_tools = ["ruff", "black", "pyright"]
+
+[style]
+formatter = "black"
+linter = "ruff"
+type_checker = "pyright"
+guidelines_file = "dev_guidelines.md"
+line_length = 88
+
+[commits]
+convention = "conventional"
+link_pattern = "Closes #{issue}"
+```
+
+The `load_triangle_config()` function in `triangle_config.py` loads this with caching.
+
 ## Development Commands
 
 ### Setup
@@ -81,17 +140,15 @@ uv run pytest -v
 
 ### Code Quality
 ```bash
-# Format code with Ruff
-uv run ruff format
+# Quick: Use project scripts
+./scripts/check.sh   # Run ruff, black, pyright, pytest
+./scripts/fix.sh     # Auto-fix formatting and linting
 
-# Lint code
-uv run ruff check
-
-# Lint and auto-fix
-uv run ruff check --fix
-
-# Type checking
-uv run mypy src/
+# Manual commands
+uv run ruff format   # Format code
+uv run ruff check    # Lint code
+uv run ruff check --fix  # Lint and auto-fix
+uv run mypy src/     # Type checking
 ```
 
 ### Environment Configuration
@@ -235,10 +292,18 @@ Key environment variables (see `.env.example` for complete list):
 ## File Structure Note
 
 - `src/agent_workshop/`: Framework source code
-- `src/agent_workshop/blueprints/`: Blueprint system (schema, validation, code generation)
-- `src/agent_workshop/agents/software_dev/`: Code review agents (CodeReviewer, PRPipeline)
+- `src/agent_workshop/cli/`: Triangle CLI commands
+- `src/agent_workshop/agents/software_dev/`: Triangle workflows, code reviewers
+  - `issue_to_pr.py`: Issue-to-PR workflow
+  - `pr_comment_processor.py`: Review comment processing
+  - `triangle_orchestrator.py`: Full cycle orchestration
+  - `config/triangle_config.py`: Project configuration schema
 - `src/agent_workshop/agents/data_science/`: Data science agents (NotebookValidator)
+- `src/agent_workshop/blueprints/`: Blueprint system (schema, validation, code generation)
+- `src/agent_workshop/utils/persistence.py`: SQLite checkpoint storage
+- `.triangle.toml`: Project-level Triangle configuration
+- `scripts/`: Quality check and fix scripts (`check.sh`, `fix.sh`)
 - `blueprints/`: Blueprint definitions (specs, templates, brainstorms)
-- `examples/`: Reference implementations (simple_validator, langgraph_pipeline, blueprint_usage)
+- `examples/`: Reference implementations
 - `tests/`: Test suite with fixtures
-- `docs/`: Documentation (currently empty but referenced in README)
+- `docs/`: Documentation

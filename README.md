@@ -1,331 +1,204 @@
 # agent-workshop
 
-Batteries-included framework for building automation-focused AI agents with full observability.
+Agentic PR automation framework with human-gated checkpoints and full observability.
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PyPI](https://img.shields.io/pypi/v/agent-workshop.svg)](https://pypi.org/project/agent-workshop/)
 
-> **📦 Install as a Package**: Users should install agent-workshop via PyPI (`uv add agent-workshop` or `pip install agent-workshop`), not clone this repository. This repo is for framework development only. See [Quick Start](#quick-start) for the correct workflow.
+> **📦 Install as a Package**: Users should install agent-workshop via PyPI (`uv add agent-workshop` or `pip install agent-workshop`), not clone this repository. This repo is for framework development only.
 
-> **🆕 NEW in v0.2.0**: Pre-built agents with customizable prompts! Install `agent-workshop[agents]` to get production-ready validators and pipelines you can use immediately or customize for your needs.
+> **🆕 v0.4.0**: Triangle Workflow for automated PR generation from GitHub issues with human-gated review checkpoints.
 
 ## Features
+
+**Triangle Workflow** (Primary Feature)
+- Issue → PR → Review → Merge automation
+- Human-gated checkpoints for review control
+- Greptile AI code review integration
+- Per-project configuration via `.triangle.toml`
+
+📊 **Full Observability**
+- Langfuse integration out of the box
+- Automatic tracing of all LLM calls
+- Cost tracking and token estimation
+- Workflow metrics and persistence
 
 🚀 **Dual-Provider Architecture**
 - Development: Claude Agent SDK ($20/month flat rate)
 - Production: Anthropic API (pay-per-token)
 - Automatic switching based on environment
 
-📊 **Full Observability**
-- Langfuse integration out of the box
-- Automatic tracing of all LLM calls
-- Cost tracking and token estimation
-- Performance metrics
-
-🕸️ **LangGraph Support**
-- Multi-step agent workflows
-- State management
-- Conditional routing
-- Iterative refinement
-
-⚡ **Fast Setup with UV**
-- Modern dependency management
-- 10-100x faster than pip/poetry
-- Reproducible environments
-
-🤖 **Pre-built Agents (NEW in v0.2.0)**
-- Production-ready validators and pipelines
-- Customizable prompts via env vars, YAML, or code
-- Built-in presets for common use cases
-- 5-minute setup to first validation
-
-🏗️ **Blueprint System (NEW)**
-- Define agents as YAML specifications
-- Generate agent code from blueprints
-- AgentBuilder meta-agent for automation
-- Validated schemas with Pydantic
+🕸️ **LangGraph Workflows**
+- Multi-step agent orchestration
+- State management with SQLite persistence
+- Conditional routing and retry logic
+- Git worktree support for parallel workflows
 
 ## Quick Start
 
-### Option 1: Pre-built Agents (Fastest - 5 minutes)
+### Triangle Workflow (Primary Use Case)
 
-**Perfect for:** Getting started quickly, common validation tasks, learning the framework
+Automate GitHub issue → PR generation with human-gated review checkpoints.
 
 ```bash
-# Install with pre-built agents
-uv add 'agent-workshop[agents]'
+# Install agent-workshop
+pip install agent-workshop
+# or: uv add agent-workshop
 
-# Configure environment
-cat > .env.development << 'EOF'
-AGENT_WORKSHOP_ENV=development
-CLAUDE_SDK_ENABLED=true
-CLAUDE_MODEL=sonnet
+# In your repository, start a workflow for an issue
+triangle start --issue 42 --repo owner/repo
 
-# Langfuse (optional)
-LANGFUSE_ENABLED=true
-LANGFUSE_PUBLIC_KEY=your_public_key
-LANGFUSE_SECRET_KEY=your_secret_key
-LANGFUSE_HOST=https://cloud.langfuse.com
-EOF
+# Check workflow status
+triangle status
 
-# Use immediately with built-in preset
-python -c "
-import asyncio
-from agent_workshop.agents.validators import DeliverableValidator
-from agent_workshop.agents.validators.presets import get_preset
-from agent_workshop import Config
-
-async def main():
-    # Use financial report preset
-    preset = get_preset('financial_report')
-    validator = DeliverableValidator(Config(), **preset)
-
-    result = await validator.run('Your financial report content...')
-    print(result)
-
-asyncio.run(main())
-"
+# After human review, approve to continue
+triangle approve owner-repo-issue-42
 ```
 
-**Available presets:**
-- `financial_report` - Financial reports and statements (GAAP, SEC compliance)
-- `research_paper` - Academic research papers (methodology, citations)
-- `technical_spec` - Technical documentation (API docs, architecture)
-- `marketing_content` - Marketing materials (brand voice, SEO, CTAs)
-- `legal_document` - Legal documents (contracts, compliance)
-- `general` - General-purpose validation
+**What Triangle Does:**
+1. **Parse Issue** - Fetches GitHub issue, extracts requirements via LLM
+2. **Setup Worktree** - Creates isolated git worktree for development
+3. **Generate Code** - Uses LLM to implement the requirements
+4. **Verify Code** - Runs tiered verification (lint, type check, tests)
+5. **Create PR** - Pushes branch and creates draft PR
+6. **CHECKPOINT** - Pauses for human + Greptile AI review
+7. **Process Comments** - After approval, auto-fixes review feedback
+8. **Merge** - Completes the workflow
 
-**Customize via YAML config:**
-```yaml
-# prompts.yaml
-deliverable_validator:
-  system_prompt: "Custom system prompt for your use case..."
-  validation_criteria:
-    - "Custom criterion 1"
-    - "Custom criterion 2"
-  output_format: json
+### Configuration
+
+Create `.triangle.toml` in your project root:
+
+```toml
+[verification]
+# Commands for code verification
+check_command = "./scripts/check.sh"
+fix_command = "./scripts/fix.sh"
+fallback_tools = ["ruff", "black", "pyright"]
+
+[style]
+# Code style enforcement
+formatter = "black"
+linter = "ruff"
+type_checker = "pyright"
+guidelines_file = "CONTRIBUTING.md"  # Injected into prompts
+line_length = 88
+
+[commits]
+# Commit message conventions
+convention = "conventional"
+link_pattern = "Closes #{issue}"
 ```
 
-```python
-from agent_workshop.agents.validators import DeliverableValidator
-from agent_workshop import Config
-
-# Automatically loads prompts.yaml if present
-validator = DeliverableValidator(Config())
-result = await validator.run(content)
-```
-
-See [prompts.yaml.example](https://github.com/trentleslie/agent-workshop/blob/main/prompts.yaml.example) for full configuration options.
+If no `.triangle.toml` exists, Triangle auto-detects project type (Python/Node/Go) and uses sensible defaults.
 
 ---
 
-### Option 2: Custom Agents (Full Flexibility)
+### Custom Agents (Alternative Use Case)
 
-**Perfect for:** Unique use cases, complex workflows, maximum customization
+For building standalone agents without the Triangle workflow:
 
-**Installation:**
 ```bash
-# Install core framework (no pre-built agents)
+# Install core framework
 uv add agent-workshop
 
-# Or install with Claude SDK for development
+# Or with Claude SDK for development
 uv add 'agent-workshop[claude-agent]'
 ```
 
-**Simple Agent (80% use case):**
+**Simple Agent:**
 
 ```python
 from agent_workshop import Agent, Config
 
-class DeliverableValidator(Agent):
+class MyValidator(Agent):
     async def run(self, content: str) -> dict:
         messages = [{
             "role": "user",
-            "content": f"Validate this deliverable:\n\n{content}"
+            "content": f"Validate this:\n\n{content}"
         }]
         result = await self.complete(messages)
         return {"validation": result}
 
 # Usage
 config = Config()  # Auto-detects dev/prod environment
-validator = DeliverableValidator(config)
-result = await validator.run(report_content)
+validator = MyValidator(config)
+result = await validator.run(content)
 ```
 
-### LangGraph Workflow (15% use case)
+**LangGraph Workflow:**
 
 ```python
 from agent_workshop.workflows import LangGraphAgent
 from langgraph.graph import StateGraph, END
 
-class ValidationPipeline(LangGraphAgent):
+class MyPipeline(LangGraphAgent):
     def build_graph(self):
         workflow = StateGraph(dict)
-
-        workflow.add_node("scan", self.quick_scan)
-        workflow.add_node("verify", self.verify)
-
-        workflow.add_edge("scan", "verify")
-        workflow.add_edge("verify", END)
-        workflow.set_entry_point("scan")
-
+        workflow.add_node("step1", self.step1)
+        workflow.add_node("step2", self.step2)
+        workflow.add_edge("step1", "step2")
+        workflow.add_edge("step2", END)
+        workflow.set_entry_point("step1")
         return workflow.compile()
 
-    async def quick_scan(self, state):
-        result = await self.provider.complete([{
-            "role": "user",
-            "content": f"Quick scan: {state['content']}"
-        }])
-        return {"scan_result": result, **state}
+    async def step1(self, state):
+        result = await self.provider.complete([...])
+        return {"step1_result": result, **state}
 
-    async def verify(self, state):
-        result = await self.provider.complete([{
-            "role": "user",
-            "content": f"Verify: {state['scan_result']}"
-        }])
-        return {"final_result": result}
-
-# Usage (still single invocation!)
-pipeline = ValidationPipeline(Config())
-result = await pipeline.run({"content": report})
+pipeline = MyPipeline(Config())
+result = await pipeline.run({"content": data})
 ```
 
 ---
 
-### Option 3: Blueprint-Generated Agents (NEW)
+## Other Features
 
-**Perfect for:** Standardized agent definitions, team collaboration, automated agent creation
+### Pre-built Validators
 
-```bash
-# Install with blueprint support
-uv add 'agent-workshop[blueprints]'
+Production-ready validators for common use cases (install with `uv add 'agent-workshop[agents]'`).
+
+**DeliverableValidator** - Document validation with presets:
+```python
+from agent_workshop.agents.validators import DeliverableValidator
+from agent_workshop.agents.validators.presets import get_preset
+
+preset = get_preset("financial_report")  # or: research_paper, technical_spec, legal_document
+validator = DeliverableValidator(Config(), **preset)
+result = await validator.run(document_content)
 ```
+
+**CodeReviewer** - Code review with security focus:
+```python
+from agent_workshop.agents.software_dev import CodeReviewer, get_preset
+
+reviewer = CodeReviewer(Config(), **get_preset("security_focused"))
+result = await reviewer.run(code_content)
+```
+
+**NotebookValidator** - Jupyter notebook quality checks:
+```python
+from agent_workshop.agents.data_science import NotebookValidator
+
+validator = NotebookValidator(Config())
+result = await validator.run(notebook_json)
+```
+
+### Blueprint System
+
+Define agents as YAML specifications and generate code (install with `uv add 'agent-workshop[blueprints]'`).
 
 ```python
 from agent_workshop.blueprints import generate_agent_from_blueprint
-from agent_workshop import Config
 
-# Generate agent code from a blueprint
 result = await generate_agent_from_blueprint(
     "blueprints/specs/my_agent.yaml",
     output_path="src/agents/my_agent.py",
 )
-
-if result["success"]:
-    print(f"Generated: {result['written_path']}")
 ```
 
-**Blueprint structure:**
-```yaml
-blueprint:
-  name: "my_validator"
-  domain: "my_domain"
-  type: "simple"  # or "langgraph"
-
-agent:
-  class_name: "MyValidator"
-  input:
-    type: "string"
-  output:
-    type: "dict"
-  prompts:
-    system_prompt: "You are an expert validator..."
-    user_prompt_template: "Validate: {content}"
-  validation_criteria:
-    - "Check for quality"
-    - "Verify completeness"
-```
-
-See [blueprints/README.md](https://github.com/trentleslie/agent-workshop/blob/main/blueprints/README.md) for complete documentation.
-
----
-
-## Pre-built Agents Reference
-
-### DeliverableValidator
-
-Production-ready validator for documents with customizable prompts and criteria.
-
-**Usage:**
-```python
-from agent_workshop.agents.validators import DeliverableValidator
-from agent_workshop import Config
-
-# Option 1: Use preset
-from agent_workshop.agents.validators.presets import get_preset
-preset = get_preset("financial_report")
-validator = DeliverableValidator(Config(), **preset)
-
-# Option 2: Custom prompts
-validator = DeliverableValidator(
-    config=Config(),
-    system_prompt="You are a compliance validator...",
-    validation_criteria=["Criterion 1", "Criterion 2"],
-    output_format="json"
-)
-
-# Option 3: YAML config (loads prompts.yaml automatically)
-validator = DeliverableValidator(Config())
-
-result = await validator.run(document_content)
-```
-
-### ValidationPipeline
-
-Multi-step LangGraph pipeline for thorough validation.
-
-**Usage:**
-```python
-from agent_workshop.agents.pipelines import ValidationPipeline
-from agent_workshop import Config
-
-# Default prompts
-pipeline = ValidationPipeline(Config())
-
-# Custom prompts
-pipeline = ValidationPipeline(
-    config=Config(),
-    quick_scan_prompt="Custom scan for {content}",
-    detailed_verify_prompt="Custom verify for {scan_result} and {content}"
-)
-
-result = await pipeline.run({"content": document_content})
-```
-
-### CodeReviewer (Software Dev)
-
-Reviews code for security, quality, and best practices.
-
-**Usage:**
-```python
-from agent_workshop.agents.software_dev import CodeReviewer, get_preset
-from agent_workshop import Config
-
-# Use security-focused preset
-preset = get_preset("security_focused")
-reviewer = CodeReviewer(Config(), **preset)
-
-result = await reviewer.run(code_content)
-# Returns: {approved: bool, issues: list, suggestions: list, summary: str}
-```
-
-**Available presets:** `general`, `security_focused`, `python_specific`, `javascript_specific`, `quick_scan`
-
-### NotebookValidator (Data Science)
-
-Validates Jupyter notebooks for reproducibility, documentation, and quality.
-
-**Usage:**
-```python
-from agent_workshop.agents.data_science import NotebookValidator
-from agent_workshop import Config
-
-validator = NotebookValidator(Config())
-
-# Pass notebook JSON or cell content
-result = await validator.run(notebook_json)
-# Returns: {valid: bool, score: int, issues: list, suggestions: list, summary: str}
-```
+See [blueprints/README.md](https://github.com/trentleslie/agent-workshop/blob/main/blueprints/README.md) for details.
 
 ---
 
@@ -613,36 +486,62 @@ uv run mypy src/
 
 ## Architecture
 
+### Triangle Workflow
+
 ```
-User's Project (your own repo)
-├── pyproject.toml
-│   └── dependencies: ["agent-workshop"]  ← Install as package
-├── agents/
-│   ├── deliverable_validator.py
-│   └── analysis_checker.py
-└── .env.development
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Triangle Workflow                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  GitHub Issue                                                        │
+│       │                                                              │
+│       ▼                                                              │
+│  ┌─────────┐   ┌──────────┐   ┌──────────┐   ┌────────┐   ┌─────┐  │
+│  │  Parse  │──▶│  Setup   │──▶│ Generate │──▶│ Verify │──▶│ PR  │  │
+│  │  Issue  │   │ Worktree │   │   Code   │   │  Code  │   │     │  │
+│  └─────────┘   └──────────┘   └──────────┘   └────────┘   └──┬──┘  │
+│                                     ▲            │            │     │
+│                                     │ retry      │ fail       │     │
+│                                     └────────────┘            ▼     │
+│                                                        ╔═══════════╗│
+│  Human + Greptile Review ◀─────────────────────────── ║CHECKPOINT ║│
+│       │                                                ╚═══════════╝│
+│       ▼                                                              │
+│  `triangle approve`                                                  │
+│       │                                                              │
+│       ▼                                                              │
+│  ┌───────────────┐   ┌───────────────┐   ┌─────────┐               │
+│  │ PRComment     │──▶│  Apply Fixes  │──▶│  Merge  │               │
+│  │ Processor     │   │               │   │         │               │
+│  └───────────────┘   └───────────────┘   └─────────┘               │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-        ↓ imports from
+### Components
 
-agent-workshop Package (from PyPI)
+```
+agent-workshop Package
+├── cli/triangle.py              ← Triangle CLI (start, approve, status)
+├── agents/software_dev/
+│   ├── issue_to_pr.py           ← Issue-to-PR workflow (LangGraph)
+│   ├── pr_comment_processor.py  ← Review comment processing
+│   ├── triangle_orchestrator.py ← Full cycle orchestration
+│   └── config/triangle_config.py← Project configuration
+├── utils/
+│   ├── persistence.py           ← SQLite checkpoint storage
+│   └── git_operations.py        ← Worktree management
 ├── Agent (simple agents)
 ├── LangGraphAgent (workflows)
-├── Blueprints                    ← AgentBuilder, code generation
-│   ├── Schema validation
-│   └── Code generation
-├── Domain Agents
-│   ├── software_dev (CodeReviewer, PRPipeline)
-│   └── data_science (NotebookValidator)
 ├── Providers (Claude SDK, Anthropic API)
 └── Langfuse Integration
 
         ↓ traces to
 
 Langfuse Dashboard
-├── Traces
-├── Metrics
-├── Costs
-└── Performance
+├── Traces (LLM calls, workflow steps)
+├── Metrics (tokens, latency, costs)
+└── Workflow history
 ```
 
 **Key Point**: Users install agent-workshop via `uv add agent-workshop` or `pip install agent-workshop`, they do NOT clone the repository.
