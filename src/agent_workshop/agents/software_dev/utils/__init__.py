@@ -2,6 +2,7 @@
 
 This package provides shared utilities:
 - git_operations: Git worktree and branch management
+- github_client: GitHub integration with Greptile MCP + gh CLI fallback
 - verification: Tiered verification system (SCHEMA → SYNTAX → LINT → TYPE → TEST)
 """
 
@@ -17,6 +18,15 @@ from agent_workshop.agents.software_dev.utils.git_operations import (
     push_branch,
     sanitize_branch_name,
     setup_worktree,
+)
+from agent_workshop.agents.software_dev.utils.github_client import (
+    Comment,
+    GitHubClient,
+    GitHubClientConfig,
+    GitHubResult,
+    Issue,
+    PullRequest,
+    Reaction,
 )
 from agent_workshop.agents.software_dev.utils.verification import (
     VerificationConfig,
@@ -38,6 +48,14 @@ __all__ = [
     "push_branch",
     "sanitize_branch_name",
     "setup_worktree",
+    # GitHub client
+    "Comment",
+    "GitHubClient",
+    "GitHubClientConfig",
+    "GitHubResult",
+    "Issue",
+    "PullRequest",
+    "Reaction",
     # Verification
     "VerificationConfig",
     "VerificationLevel",
