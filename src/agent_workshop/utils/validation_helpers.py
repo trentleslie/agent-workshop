@@ -5,10 +5,10 @@ Provides helpers for validating email addresses and URLs.
 """
 
 import re
-from typing import Union
+from typing import Optional
 
 
-def validate_email(email: Union[str, None]) -> bool:
+def validate_email(email: Optional[str]) -> bool:
     """
     Validate email format using regex.
 
@@ -47,7 +47,7 @@ def validate_email(email: Union[str, None]) -> bool:
     # - Must have exactly one @ symbol
     # - Domain part: letters, numbers, periods, hyphens
     # - Must end with a valid TLD (2+ characters)
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    email_pattern = r"^[a-zA-Z0-9][a-zA-Z0-9._%+-]*[a-zA-Z0-9]@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$"
 
     try:
         return bool(re.match(email_pattern, email.strip()))
@@ -55,7 +55,7 @@ def validate_email(email: Union[str, None]) -> bool:
         return False
 
 
-def validate_url(url: Union[str, None]) -> bool:
+def validate_url(url: Optional[str]) -> bool:
     """
     Validate URL format.
 
@@ -98,7 +98,9 @@ def validate_url(url: Union[str, None]) -> bool:
     # - Domain: letters, numbers, periods, hyphens
     # - Optional port number
     # - Optional path, query parameters, and fragment
-    url_pattern = r'^[a-zA-Z][a-zA-Z\d+\-\.]*://[a-zA-Z0-9\-\.]+(?:\:[0-9]+)?(?:/[^\s]*)?$'
+    url_pattern = (
+        r"^[a-zA-Z][a-zA-Z\d+\-\.]*://[a-zA-Z0-9\-\.]+(?:\:[0-9]+)?(?:/[^\s]*)?$"
+    )
 
     try:
         return bool(re.match(url_pattern, url.strip()))
